@@ -1,0 +1,241 @@
+import json
+import os
+import re
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
+
+from backend.generator import generate_ods, generate_xlsx
+from backend.heuristics import guess_template
+from backend.parser import extract_top_preview, parse_schedule
+
+app = FastAPI(title="班表格式轉換工具 API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+BASE_ODS_TEMPLATE = BASE_DIR / "白霧.ods"
+
+MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20MB
+ALLOWED_EXTENSIONS = {".xlsx", ".ods"}
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-一-鿿]+$")
+
+
+def _save_upload_to_temp(file: UploadFile) -> str:
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(400, f"不支援的檔案格式：{ext or '未知'}，僅支援 .xlsx / .ods")
+
+    contents = file.file.read(MAX_UPLOAD_SIZE + 1)
+    if not contents:
+        raise HTTPException(400, "上傳檔案為空")
+    if len(contents) > MAX_UPLOAD_SIZE:
+        raise HTTPException(400, "檔案過大，上限 20MB")
+
+    fd, tmp_path = tempfile.mkstemp(suffix=ext)
+    with os.fdopen(fd, "wb") as f:
+        f.write(contents)
+    return tmp_path
+
+
+def _parse_template_json(template_json: str) -> dict:
+    try:
+        return json.loads(template_json)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"template JSON 格式錯誤：{e}")
+
+
+def _validate_ids(scope_id: str, template_id: str = None):
+    if not _SAFE_ID_RE.match(scope_id):
+        raise HTTPException(400, "scope_id 含不合法字元")
+    if template_id is not None and not _SAFE_ID_RE.match(template_id):
+        raise HTTPException(400, "template_id 含不合法字元")
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.post("/api/analyze")
+async def analyze(file: UploadFile = File(...)):
+    tmp_path = _save_upload_to_temp(file)
+    try:
+        template = guess_template(tmp_path)
+        preview_rows = extract_top_preview(tmp_path, template["sheet_name"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(422, f"分析失敗：{e}")
+    finally:
+        os.remove(tmp_path)
+
+    return {
+        "suggested_template": template,
+        "preview_rows": preview_rows,
+    }
+
+
+@app.post("/api/preview")
+async def preview(file: UploadFile = File(...), template: str = Form(...)):
+    tmp_path = _save_upload_to_temp(file)
+    template_dict = _parse_template_json(template)
+    try:
+        result = parse_schedule(tmp_path, template_dict)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(422, f"解析失敗，請確認範本欄位對照：{e}")
+    finally:
+        os.remove(tmp_path)
+
+    employees = result["employees"]
+
+    return {
+        "employees_count": len(employees),
+        "anomalies": result["anomalies"],
+        "is_healthy": result["is_healthy"],
+        "employees": employees,
+    }
+
+
+@app.post("/api/convert")
+async def convert(
+    file: UploadFile = File(...),
+    template: str = Form(...),
+    output_format: str = Form(None),
+):
+    tmp_path = _save_upload_to_temp(file)
+    template_dict = _parse_template_json(template)
+
+    fmt = (output_format or Path(file.filename).suffix.lstrip(".")).lower()
+    if fmt not in ("xlsx", "ods"):
+        os.remove(tmp_path)
+        raise HTTPException(400, "output_format 僅支援 xlsx 或 ods")
+
+    out_path = None
+    try:
+        result = parse_schedule(tmp_path, template_dict)
+
+        out_fd, out_path = tempfile.mkstemp(suffix=f".{fmt}")
+        os.close(out_fd)
+
+        if fmt == "xlsx":
+            generate_xlsx(result["employees"], out_path, template_dict)
+        else:
+            generate_ods(
+                result["employees"],
+                out_path,
+                template_dict,
+                template_ods_path=str(BASE_ODS_TEMPLATE),
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        if out_path and os.path.exists(out_path):
+            os.remove(out_path)
+        raise HTTPException(422, f"轉換失敗：{e}")
+    finally:
+        os.remove(tmp_path)
+
+    return FileResponse(
+        out_path,
+        filename=f"converted.{fmt}",
+        background=BackgroundTask(os.remove, out_path),
+    )
+
+
+@app.get("/api/templates")
+async def list_templates(scope_id: str):
+    _validate_ids(scope_id)
+    scope_dir = TEMPLATES_DIR / scope_id
+    if not scope_dir.exists():
+        return []
+
+    results = []
+    for f in sorted(scope_dir.glob("*.json")):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        results.append({
+            "template_id": data.get("template_id", f.stem),
+            "template_name": data.get("template_name", f.stem),
+            "updated_at": data.get("updated_at"),
+        })
+    return results
+
+
+@app.get("/api/templates/{scope_id}/{template_id}")
+async def get_template(scope_id: str, template_id: str):
+    _validate_ids(scope_id, template_id)
+    path = TEMPLATES_DIR / scope_id / f"{template_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "找不到範本")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@app.post("/api/templates/{scope_id}")
+async def create_template(scope_id: str, template: dict):
+    _validate_ids(scope_id)
+    scope_dir = TEMPLATES_DIR / scope_id
+    scope_dir.mkdir(parents=True, exist_ok=True)
+
+    template_id = uuid.uuid4().hex[:12]
+    now = datetime.now(timezone.utc).isoformat()
+    record = {
+        **template,
+        "template_id": template_id,
+        "scope_id": scope_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+    (scope_dir / f"{template_id}.json").write_text(
+        json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return {"template_id": template_id}
+
+
+@app.put("/api/templates/{scope_id}/{template_id}")
+async def update_template(scope_id: str, template_id: str, template: dict):
+    _validate_ids(scope_id, template_id)
+    path = TEMPLATES_DIR / scope_id / f"{template_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "找不到範本")
+
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    now = datetime.now(timezone.utc).isoformat()
+    record = {
+        **template,
+        "template_id": template_id,
+        "scope_id": scope_id,
+        "created_at": existing.get("created_at", now),
+        "updated_at": now,
+    }
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"status": "ok"}
+
+
+@app.delete("/api/templates/{scope_id}/{template_id}")
+async def delete_template(scope_id: str, template_id: str):
+    _validate_ids(scope_id, template_id)
+    path = TEMPLATES_DIR / scope_id / f"{template_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "找不到範本")
+    path.unlink()
+    return {"status": "ok"}
+
+
+FRONTEND_DIR = BASE_DIR / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

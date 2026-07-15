@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>班表格式轉換工具</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <h1>班表格式轉換工具</h1>
+  <p class="app-sub">格狀月排班表 → 每日橫向長條圖排班表</p>
+</header>
+
+<main>
+  <!-- 上傳區 -->
+  <section id="upload-panel" class="panel">
+    <h2>1. 上傳班表檔案</h2>
+
+    <div class="field-row">
+      <label for="scope-id">店家 / 品牌名稱（選填，用於儲存與重用範本）</label>
+      <input type="text" id="scope-id" placeholder="例如：白霧時光">
+    </div>
+
+    <div class="field-row">
+      <label for="saved-template-select">已存範本（選填）</label>
+      <select id="saved-template-select">
+        <option value="">— 不使用已存範本，重新分析 —</option>
+      </select>
+    </div>
+
+    <div class="field-row">
+      <label for="file-input">班表檔案（.xlsx / .ods）</label>
+      <input type="file" id="file-input" accept=".xlsx,.ods">
+    </div>
+
+    <button id="analyze-btn" type="button" class="btn btn-primary">分析檔案</button>
+    <span id="upload-status" class="status-text"></span>
+  </section>
+
+  <!-- 單日預覽區 -->
+  <section id="day-preview-panel" class="panel hidden">
+    <h2>2. 單日預覽 &amp; 下載</h2>
+
+    <div id="health-banner" class="health-banner"></div>
+    <ul id="anomalies-list" class="anomalies-list"></ul>
+
+    <div class="field-row inline no-print">
+      <label for="day-select">預覽日期</label>
+      <select id="day-select"></select>
+      <button id="print-btn" type="button" class="btn btn-secondary">列印本日班表</button>
+    </div>
+
+    <div id="day-title" class="day-title"></div>
+    <div id="gantt-container" class="gantt-container"></div>
+
+    <div class="field-row inline no-print convert-row">
+      <label for="output-format">輸出格式</label>
+      <select id="output-format">
+        <option value="xlsx">Excel（.xlsx）</option>
+        <option value="ods">ODS（.ods）</option>
+      </select>
+      <button id="convert-btn" type="button" class="btn btn-primary">轉換並下載</button>
+      <span id="convert-status" class="status-text"></span>
+    </div>
+  </section>
+</main>
+
+<!-- 確認 Modal -->
+<div id="confirm-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>3. 確認欄位對照</h2>
+      <button id="modal-close-btn" type="button" class="btn-icon" aria-label="關閉">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="modal-col">
+        <h3>原始資料預覽（前 15 列）</h3>
+        <div id="preview-grid-wrap" class="preview-grid-wrap">
+          <table id="preview-grid" class="preview-grid"></table>
+        </div>
+      </div>
+
+      <div class="modal-col">
+        <h3>欄位對照</h3>
+        <div class="mapping-form">
+          <div class="field-row">
+            <label>工作表</label>
+            <input type="text" id="map-sheet-name" readonly>
+          </div>
+          <div class="field-row">
+            <label for="map-header-row">日期標頭列（第幾列）</label>
+            <input type="number" id="map-header-row" min="1">
+          </div>
+          <div class="field-row">
+            <label for="map-name-col">姓名欄位（第幾欄）</label>
+            <input type="number" id="map-name-col" min="1">
+          </div>
+          <div class="field-row">
+            <label for="map-first-day-col">第一天日期欄位（第幾欄）</label>
+            <input type="number" id="map-first-day-col" min="1">
+          </div>
+          <div class="field-row">
+            <label for="map-cols-per-day">每天佔用欄數</label>
+            <input type="number" id="map-cols-per-day" min="1">
+          </div>
+          <div class="field-row">
+            <label for="map-expected-rows">每位員工佔用列數</label>
+            <input type="number" id="map-expected-rows" min="1" max="8">
+          </div>
+          <div class="field-row">
+            <label for="map-name-row-offset">姓名所在列（區塊內第幾列，從0算）</label>
+            <input type="number" id="map-name-row-offset" min="0">
+          </div>
+        </div>
+
+        <h3>區塊列語意</h3>
+        <div id="row-meanings-editor" class="row-meanings-editor"></div>
+
+        <h3>另存為範本（選填）</h3>
+        <div class="field-row inline">
+          <input type="text" id="template-name-input" placeholder="範本名稱">
+          <button id="save-template-btn" type="button" class="btn btn-secondary">儲存範本</button>
+          <span id="save-template-status" class="status-text"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <span id="preview-result-text" class="status-text"></span>
+      <button id="confirm-preview-btn" type="button" class="btn btn-primary">確認並試解析</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

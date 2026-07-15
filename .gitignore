@@ -3,3 +3,4 @@ __pycache__/
 *.ods
 *.xlsx
 sample_analysis.txt
+templates/
