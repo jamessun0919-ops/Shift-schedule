@@ -29,6 +29,7 @@
   const modalOverlay = $("confirm-modal");
   const modalCloseBtn = $("modal-close-btn");
   const previewGridEl = $("preview-grid");
+  const pickHint = $("pick-hint");
 
   const mapSheetName = $("map-sheet-name");
   const mapHeaderRow = $("map-header-row");
@@ -141,7 +142,7 @@
     mapSheetName.value = template.sheet_name || "";
     mapHeaderRow.value = template.header_row_index || 1;
     mapNameCol.value = template.mapping?.name_col || 1;
-    mapFirstDayCol.value = template.mapping?.first_day_col || 1;
+    mapFirstDayCol.value = colLetter(template.mapping?.first_day_col || 1);
     mapColsPerDay.value = template.mapping?.cols_per_day || 2;
     mapExpectedRows.value = template.block?.expected_rows || 1;
     mapNameRowOffset.value = template.block?.name_row_offset || 0;
@@ -155,6 +156,7 @@
   }
 
   function closeModal() {
+    disarm();
     modalOverlay.classList.add("hidden");
   }
   modalCloseBtn.addEventListener("click", closeModal);
@@ -163,6 +165,25 @@
   });
 
   // ---- Raw preview grid ----
+  function colLetter(n) {
+    let s = "";
+    while (n > 0) {
+      const r = (n - 1) % 26;
+      s = String.fromCharCode(65 + r) + s;
+      n = Math.floor((n - 1) / 26);
+    }
+    return s;
+  }
+
+  // 從儲存格參照（如 "C5"）取出欄號（C -> 3）；只取欄，列僅供顯示確認
+  function refToCol(ref) {
+    const m = String(ref).toUpperCase().match(/^[A-Z]+/);
+    if (!m) return NaN;
+    let n = 0;
+    for (const ch of m[0]) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n;
+  }
+
   function renderPreviewGrid(rows) {
     previewGridEl.innerHTML = "";
     if (!rows || !rows.length) return;
@@ -173,7 +194,7 @@
     headRow.appendChild(document.createElement("th"));
     for (let c = 1; c <= maxCols; c++) {
       const th = document.createElement("th");
-      th.textContent = c;
+      th.textContent = colLetter(c);
       headRow.appendChild(th);
     }
     thead.appendChild(headRow);
@@ -182,12 +203,16 @@
     const tbody = document.createElement("tbody");
     rows.forEach((row, rIdx) => {
       const tr = document.createElement("tr");
+      tr.dataset.row = String(rIdx + 1);
       const rowNumTd = document.createElement("td");
       rowNumTd.textContent = rIdx + 1;
       rowNumTd.style.fontWeight = "600";
+      rowNumTd.dataset.row = String(rIdx + 1);
       tr.appendChild(rowNumTd);
       for (let c = 0; c < maxCols; c++) {
         const td = document.createElement("td");
+        td.dataset.row = String(rIdx + 1);
+        td.dataset.col = String(c + 1);
         const val = row[c];
         td.textContent = val === null || val === undefined ? "" : val;
         tr.appendChild(td);
@@ -195,7 +220,95 @@
       tbody.appendChild(tr);
     });
     previewGridEl.appendChild(tbody);
+    applyGridHighlight();
   }
+
+  // ---- Click-to-fill: 點格子帶入列/欄號 ----
+  let armed = null; // { input, axis, btn }
+
+  function applyGridHighlight() {
+    if (!previewGridEl.tBodies.length) return;
+    const tbody = previewGridEl.tBodies[0];
+    tbody.querySelectorAll("td.hl-col").forEach((el) => el.classList.remove("hl-col"));
+    tbody.querySelectorAll("tr.hl-row").forEach((el) => el.classList.remove("hl-row"));
+    const hr = parseInt(mapHeaderRow.value, 10);
+    const cols = [parseInt(mapNameCol.value, 10), refToCol(mapFirstDayCol.value)];
+    if (hr) {
+      const tr = tbody.querySelector(`tr[data-row="${hr}"]`);
+      if (tr) tr.classList.add("hl-row");
+    }
+    cols.forEach((c) => {
+      if (!c) return;
+      tbody.querySelectorAll(`td[data-col="${c}"]`).forEach((td) => td.classList.add("hl-col"));
+    });
+  }
+
+  function clearPickHover() {
+    previewGridEl.querySelectorAll("td.pick-col").forEach((el) => el.classList.remove("pick-col"));
+    previewGridEl.querySelectorAll("tr.pick-row").forEach((el) => el.classList.remove("pick-row"));
+  }
+
+  function disarm() {
+    if (armed) armed.btn.classList.remove("armed");
+    armed = null;
+    previewGridEl.classList.remove("picking");
+    clearPickHover();
+    pickHint.classList.add("hidden");
+  }
+
+  function armPick(btn) {
+    if (armed && armed.btn === btn) { disarm(); return; }
+    disarm();
+    armed = { input: $(btn.dataset.target), axis: btn.dataset.axis, btn };
+    btn.classList.add("armed");
+    previewGridEl.classList.add("picking");
+    const unit = { row: "列號", col: "欄號", cell: "位置" }[armed.axis];
+    pickHint.textContent = `點選左側表格中的儲存格，將其${unit}帶入「${btn.dataset.label}」`;
+    pickHint.classList.remove("hidden");
+  }
+
+  document.querySelectorAll(".pick-btn").forEach((btn) => {
+    btn.addEventListener("click", () => armPick(btn));
+  });
+
+  [mapHeaderRow, mapNameCol, mapFirstDayCol].forEach((inp) => {
+    inp.addEventListener("input", applyGridHighlight);
+  });
+
+  previewGridEl.addEventListener("mousemove", (e) => {
+    if (!armed) return;
+    clearPickHover();
+    const td = e.target.closest("td");
+    if (!td) return;
+    if (armed.axis === "row" && td.dataset.row) {
+      td.parentElement.classList.add("pick-row");
+    } else if (armed.axis === "col" && td.dataset.col) {
+      previewGridEl.tBodies[0]
+        .querySelectorAll(`td[data-col="${td.dataset.col}"]`)
+        .forEach((x) => x.classList.add("pick-col"));
+    } else if (armed.axis === "cell" && td.dataset.col && td.dataset.row) {
+      td.classList.add("pick-col");
+    }
+  });
+  previewGridEl.addEventListener("mouseleave", () => { if (armed) clearPickHover(); });
+
+  previewGridEl.addEventListener("click", (e) => {
+    if (!armed) return;
+    const td = e.target.closest("td");
+    if (!td) return;
+    let val;
+    if (armed.axis === "row") val = td.dataset.row;
+    else if (armed.axis === "col") val = td.dataset.col;
+    else if (armed.axis === "cell" && td.dataset.col && td.dataset.row) {
+      val = colLetter(parseInt(td.dataset.col, 10)) + td.dataset.row;
+    }
+    if (val === undefined) return;
+    armed.input.value = val;
+    td.classList.add("cell-flash");
+    setTimeout(() => td.classList.remove("cell-flash"), 500);
+    disarm();
+    applyGridHighlight();
+  });
 
   // ---- Row meanings editor ----
   function renderRowMeaningsEditor(rowMeanings, expectedRows) {
@@ -313,7 +426,7 @@
       header_row_index: parseInt(mapHeaderRow.value, 10) || 1,
       mapping: {
         name_col: parseInt(mapNameCol.value, 10) || 1,
-        first_day_col: parseInt(mapFirstDayCol.value, 10) || 1,
+        first_day_col: refToCol(mapFirstDayCol.value) || 1,
         cols_per_day: parseInt(mapColsPerDay.value, 10) || 2,
       },
       block: {

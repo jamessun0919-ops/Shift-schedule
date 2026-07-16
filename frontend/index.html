@@ -20,7 +20,7 @@
 
     <div class="field-row">
       <label for="scope-id">店家 / 品牌名稱（選填，用於儲存與重用範本）</label>
-      <input type="text" id="scope-id" placeholder="例如：白霧時光">
+      <input type="text" id="scope-id" placeholder="例如：毛毛漢堡">
     </div>
 
     <div class="field-row">
@@ -78,36 +78,46 @@
     <div class="modal-body">
       <div class="modal-col">
         <h3>原始資料預覽（前 15 列）</h3>
+        <p id="pick-hint" class="pick-hint hidden"></p>
         <div id="preview-grid-wrap" class="preview-grid-wrap">
           <table id="preview-grid" class="preview-grid"></table>
         </div>
       </div>
 
       <div class="modal-col">
-        <h3>欄位對照</h3>
+        <h3>請確認智慧欄位辨識是否正確，此程序完成後會形成範本，再次使用可直接跳過</h3>
         <div class="mapping-form">
           <div class="field-row">
             <label>工作表</label>
             <input type="text" id="map-sheet-name" readonly>
           </div>
           <div class="field-row">
-            <label for="map-header-row">日期標頭列（第幾列）</label>
-            <input type="number" id="map-header-row" min="1">
+            <label for="map-header-row">請確認日期在表中第幾（橫）列？或點選按鍵由表格選擇</label>
+            <div class="pick-group">
+              <input type="number" id="map-header-row" min="1">
+              <button type="button" class="pick-btn" data-target="map-header-row" data-axis="row" data-label="日期所在列">從表格點選</button>
+            </div>
           </div>
           <div class="field-row">
-            <label for="map-name-col">姓名欄位（第幾欄）</label>
-            <input type="number" id="map-name-col" min="1">
+            <label for="map-name-col">請確認人員姓名在表中第幾（直）欄？或點選按鍵由表格選擇</label>
+            <div class="pick-group">
+              <input type="number" id="map-name-col" min="1">
+              <button type="button" class="pick-btn" data-target="map-name-col" data-axis="col" data-label="姓名所在欄">從表格點選</button>
+            </div>
           </div>
           <div class="field-row">
-            <label for="map-first-day-col">第一天日期欄位（第幾欄）</label>
-            <input type="number" id="map-first-day-col" min="1">
+            <label for="map-first-day-col">員工上下班時間，從在表中哪個格子開始記錄？或點選按鍵由表格選擇</label>
+            <div class="pick-group">
+              <input type="text" id="map-first-day-col" readonly placeholder="例如 C5">
+              <button type="button" class="pick-btn" data-target="map-first-day-col" data-axis="cell" data-label="上下班起始格">從表格點選</button>
+            </div>
           </div>
           <div class="field-row">
-            <label for="map-cols-per-day">每天佔用欄數</label>
+            <label for="map-cols-per-day">表格中的上下班時間，是集中一格（填１）？還是上下班各一格（填２）？</label>
             <input type="number" id="map-cols-per-day" min="1">
           </div>
           <div class="field-row">
-            <label for="map-expected-rows">每位員工佔用列數</label>
+            <label for="map-expected-rows">表格中每位員工資料佔幾個(橫)列？</label>
             <input type="number" id="map-expected-rows" min="1" max="8">
           </div>
           <div class="field-row">

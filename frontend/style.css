@@ -222,6 +222,35 @@ input[readonly] {
 .preview-grid td.hl-col { background: rgba(42,120,214,0.10); }
 .preview-grid tr.hl-row td { background: rgba(42,120,214,0.10); }
 
+/* 點選帶入（pick）互動 */
+.pick-group { display: flex; align-items: center; gap: 8px; }
+.pick-group input { flex: 1 1 auto; }
+.pick-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--baseline);
+  background: var(--page);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pick-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.pick-btn.armed {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.pick-hint {
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin: 0 0 8px;
+}
+.preview-grid.picking td { cursor: pointer; }
+.preview-grid td.pick-col, .preview-grid tr.pick-row td { background: rgba(42,120,214,0.28); }
+.preview-grid td.cell-flash { background: rgba(42,120,214,0.55); transition: background 0.35s; }
+
 .row-meanings-editor { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .row-meaning-item {
   border: 1px solid var(--gridline);
