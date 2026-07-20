@@ -144,15 +144,17 @@
     mapSheetName.value = template.sheet_name || "";
     mapHeaderRow.value = template.header_row_index || 1;
     mapNameCol.value = colLetter(template.mapping?.name_col || 1);
-    mapFirstDayCol.value = guessFirstDayCellRef(
-      currentPreviewRows,
-      template.header_row_index || 1,
-      template.mapping?.first_day_col || 1
-    );
+    mapFirstDayCol.value =
+      colLetter(template.mapping?.first_day_col || 1) +
+      (template.first_data_row || (template.header_row_index || 1) + 1);
     mapColsPerDay.value = template.mapping?.cols_per_day || 2;
     mapExpectedRows.value = template.block?.expected_rows || 1;
     mapNameRowOffset.value = (template.block?.name_row_offset || 0) + 1;
-    templateNameInput.value = template.template_name || "";
+    // 已存範本（有 template_id）沿用原本名稱；剛分析出的猜測範本則預設「品牌文字＋範本」
+    const scopeId = safeScopeId();
+    templateNameInput.value = template.template_id
+      ? (template.template_name || "")
+      : (scopeId ? `${scopeId}範本` : (template.template_name || ""));
 
     renderPreviewGrid(currentPreviewRows);
     renderRowMeaningsEditor(template.block?.row_meanings || [], template.block?.expected_rows || 1);
@@ -179,22 +181,6 @@
       n = Math.floor((n - 1) / 26);
     }
     return s;
-  }
-
-  // 純顯示用途：在原始預覽列中，猜一個看起來像是真正資料開始的列號，
-  // 組成完整儲存格參照（如 N6），讓「上下班起始格」預設值一眼就懂。
-  // 只挑資料列，不影響送給後端的欄位對照（後端只吃欄號，列僅供確認）。
-  function guessFirstDayCellRef(rows, headerRowIndex, col) {
-    let fallbackRow = null;
-    for (let r = headerRowIndex; r < (rows || []).length; r++) {
-      const val = rows[r][col - 1];
-      if (val === null || val === undefined || val === "") continue;
-      if (fallbackRow === null) fallbackRow = r + 1;
-      if (typeof val === "number" || (typeof val === "string" && !isNaN(Number(val)))) {
-        return colLetter(col) + (r + 1);
-      }
-    }
-    return colLetter(col) + (fallbackRow || (headerRowIndex + 1));
   }
 
   // 從儲存格參照（如 "C5"）取出欄號（C -> 3）；只取欄，列僅供顯示確認
@@ -386,24 +372,14 @@
         wrap.appendChild(input);
         subFieldWrap.appendChild(wrap);
       } else if (type === "metadata") {
-        const nameWrap = document.createElement("label");
-        nameWrap.className = "sub-field";
-        nameWrap.textContent = "欄位名稱：";
-        const nameInput = document.createElement("input");
-        nameInput.type = "text";
-        nameInput.dataset.role = "meta-name";
-        nameInput.value = meaning.name || "employee_id";
-        nameWrap.appendChild(nameInput);
-        subFieldWrap.appendChild(nameWrap);
-
         const colWrap = document.createElement("label");
         colWrap.className = "sub-field";
         colWrap.textContent = "欄位位置（留空＝不辨識）：";
         const colInput = document.createElement("input");
-        colInput.type = "number";
-        colInput.min = "1";
+        colInput.type = "text";
+        colInput.placeholder = "例如 B";
         colInput.dataset.role = "meta-col";
-        if (meaning.col !== undefined && meaning.col !== null) colInput.value = meaning.col;
+        if (meaning.col !== undefined && meaning.col !== null) colInput.value = colLetter(meaning.col);
         colWrap.appendChild(colInput);
         subFieldWrap.appendChild(colWrap);
       }
@@ -433,10 +409,10 @@
         return { type, index: n - 1 };
       }
       if (type === "metadata") {
-        const nameEl = item.querySelector('[data-role="meta-name"]');
         const colEl = item.querySelector('[data-role="meta-col"]');
-        const meaning = { type: "metadata", name: (nameEl?.value || "employee_id").trim() };
-        if (colEl && colEl.value !== "") meaning.col = parseInt(colEl.value, 10);
+        const meaning = { type: "metadata", name: "employee_id" };
+        const col = colEl && colEl.value.trim() !== "" ? refToCol(colEl.value) : NaN;
+        if (!isNaN(col)) meaning.col = col;
         return meaning;
       }
       return { type: "shift_string", index: 0 };
@@ -561,41 +537,18 @@
     dayTitle.textContent = `${day} 日 排班預覽`;
     ganttContainer.innerHTML = "";
 
-    const legend = document.createElement("div");
-    legend.className = "gantt-legend";
-    let maxShiftIdx = 0;
-    for (const emp of lastEmployees) {
-      const shifts = emp.days[day]?.shifts || [];
-      maxShiftIdx = Math.max(maxShiftIdx, shifts.length);
-    }
-    for (let i = 0; i < Math.min(maxShiftIdx, SERIES_COLORS.length); i++) {
-      const item = document.createElement("div");
-      item.className = "gantt-legend-item";
-      const swatch = document.createElement("span");
-      swatch.className = "gantt-legend-swatch";
-      swatch.style.background = SERIES_COLORS[i];
-      item.appendChild(swatch);
-      item.appendChild(document.createTextNode(`班別${i + 1}`));
-      legend.appendChild(item);
-    }
-    ganttContainer.appendChild(legend);
-
     const axis = document.createElement("div");
     axis.className = "gantt-axis";
-    for (let h = AXIS_START; h <= AXIS_END; h += 2) {
+    for (let h = AXIS_START; h <= AXIS_END; h += 1) {
       const pct = ((h - AXIS_START) / (AXIS_END - AXIS_START)) * 100;
       const span = document.createElement("span");
       span.style.left = `${pct}%`;
-      span.textContent = `${h}:00`;
+      span.textContent = `${h}`;
       axis.appendChild(span);
     }
     ganttContainer.appendChild(axis);
 
-    const employeesWithShifts = lastEmployees.filter((emp) =>
-      (emp.days[day]?.shifts || []).some((s) => s.start !== null && s.end !== null)
-    );
-
-    if (!employeesWithShifts.length) {
+    if (!lastEmployees.length) {
       const empty = document.createElement("div");
       empty.className = "gantt-empty";
       empty.textContent = "當天無排班資料";
@@ -603,7 +556,9 @@
       return;
     }
 
-    for (const emp of employeesWithShifts) {
+    // 顯示所有員工（含當天沒有可辨識時間段的人，如記錄方式特殊的營運經理），
+    // 只是沒有時間段的人不會畫出長條，只留姓名列——與下載檔案的既有行為一致。
+    for (const emp of lastEmployees) {
       const row = document.createElement("div");
       row.className = "gantt-row";
 
@@ -630,7 +585,9 @@
         bar.className = "gantt-bar";
         bar.style.left = `${leftPct}%`;
         bar.style.width = `${widthPct}%`;
-        bar.style.background = SERIES_COLORS[idx % SERIES_COLORS.length];
+        // 目前階段：前後段班別性質上無差異，故不用顏色區分，統一用同一色；
+        // SERIES_COLORS 其餘色階保留供後續需求（例如真的需要區分班別時）使用。
+        bar.style.background = SERIES_COLORS[0];
         bar.textContent = `${fmtHour(s.start)}-${fmtHour(s.end)}`;
         bar.title = `${emp.name} 班別${idx + 1}：${fmtHour(s.start)}-${fmtHour(s.end)}`;
         track.appendChild(bar);

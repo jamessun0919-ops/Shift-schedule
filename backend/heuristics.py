@@ -244,8 +244,27 @@ def guess_template(file_path):
         expected_rows = 1
         
     row_meanings = []
+
+    # Determine which row_offset within a block actually holds the employee's name
+    # (vs. a category label like job title). Job titles are a controlled vocabulary
+    # shared across employees, but a title held by only one employee (e.g. only one
+    # 副店長) never repeats and so can't be excluded by frequency alone. Instead, tile
+    # the sheet at each candidate offset and count how many DISTINCT name-like values
+    # occur there: the true name offset has one distinct value per employee (maximal),
+    # while a title offset -- even with some unique titles mixed in -- has fewer
+    # distinct values than employees because most titles repeat. Run uniformly for any
+    # block size (including expected_rows==1, where there's only one possible offset: 0).
+    offset_buckets = find_block_anchors(rows, name_col, expected_rows, date_row_idx + 1)
     name_block_offset = 0
-    
+    best_distinct = -1
+    for offset, anchor_rows in offset_buckets.items():
+        distinct = len(set(str(rows[r].get(name_col)).strip() for r in anchor_rows))
+        if distinct > best_distinct:
+            best_distinct = distinct
+            name_block_offset = offset
+
+    block_name_rows = offset_buckets.get(name_block_offset, [])
+
     if expected_rows == 1:
         # Check if cells in date columns contain text format shifts
         sample_val = ""
@@ -254,7 +273,7 @@ def guess_template(file_path):
             if val and "-" in str(val):
                 sample_val = str(val)
                 break
-                
+
         if "-" in sample_val:
             # Layout Type B
             row_meanings = [
@@ -273,23 +292,6 @@ def guess_template(file_path):
         ]
     else:
         # Layout Type A (3-row or multi-row grid layout)
-        # Determine which row_offset within a block actually holds the employee's name
-        # (vs. a category label like job title). Job titles are a controlled vocabulary
-        # shared across employees, but a title held by only one employee (e.g. only one
-        # 副店長) never repeats and so can't be excluded by frequency alone. Instead, tile
-        # the sheet at each candidate offset and count how many DISTINCT name-like values
-        # occur there: the true name offset has one distinct value per employee (maximal),
-        # while a title offset -- even with some unique titles mixed in -- has fewer
-        # distinct values than employees because most titles repeat.
-        offset_buckets = find_block_anchors(rows, name_col, expected_rows, date_row_idx + 1)
-        name_block_offset = 0
-        best_distinct = -1
-        for offset, anchor_rows in offset_buckets.items():
-            distinct = len(set(str(rows[r].get(name_col)).strip() for r in anchor_rows))
-            if distinct > best_distinct:
-                best_distinct = distinct
-                name_block_offset = offset
-
         # The block's row count (expected_rows) is not assumed to map to a fixed
         # "2 shifts + 1 metadata row" structure (that would hardcode the shift count,
         # conflicting with the requirement to support N shifts per block, e.g. 3-段班).
@@ -297,8 +299,6 @@ def guess_template(file_path):
         # LAST row of the block, so that convention is used as the split point; every
         # other row in the block becomes a sequential shift row in order.
         metadata_row_offset = expected_rows - 1
-
-        block_name_rows = offset_buckets.get(name_block_offset, [])
 
         # Vote across all blocks for which column (in the label area before first_day_col,
         # including name_col itself) holds an ID-like value in the metadata row. If no
@@ -337,10 +337,29 @@ def guess_template(file_path):
                 # (0..expected_rows-2) maps directly to a sequential shift index.
                 row_meanings.append({"type": "shift", "index": row_offset, "name": f"班別{row_offset + 1}"})
 
+    # Best-effort guess of which physical row holds the FIRST real employee's first
+    # shift cell, for display purposes only (e.g. front-end shows "C5" instead of just
+    # "C"). Anchored on the earliest confirmed name row rather than on first_day_col's
+    # own content, because a genuine first employee can coincidentally have an atypical
+    # first-day value (on leave, blank, ad-hoc note) that would fool a "looks like a
+    # valid shift" scan into skipping past the real first block onto a later one.
+    first_data_row = None
+    if block_name_rows:
+        first_shift_offset = 0
+        for idx, meaning in enumerate(row_meanings):
+            if meaning["type"] in ("shift", "shift_start", "shift_string"):
+                first_shift_offset = idx
+                break
+        earliest_name_row = min(block_name_rows)
+        target_row = earliest_name_row - name_block_offset + first_shift_offset
+        if 0 <= target_row < len(rows):
+            first_data_row = target_row + 1  # 1-based
+
     suggested_template = {
         "template_name": f"{selected_sheet} 啟發式預測範本",
         "sheet_name": selected_sheet,
         "header_row_index": date_row_idx + 1, # 1-based index
+        "first_data_row": first_data_row, # 1-based；純顯示用途，不影響解析
         "mapping": {
             "name_col": name_col,
             "first_day_col": first_day_col,
@@ -352,5 +371,5 @@ def guess_template(file_path):
             "row_meanings": row_meanings
         }
     }
-    
+
     return suggested_template

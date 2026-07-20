@@ -7,6 +7,9 @@ from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.series import SeriesLabel
 from openpyxl.styles import PatternFill, Font, Alignment
 
+# 班別長條的統一顏色，對應網頁預覽的 --series-1（前後段班別性質上無差異，不用顏色區分）
+DUR_SERIES_COLOR = "2A78D6"
+
 NS = {
     "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
@@ -157,12 +160,15 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col):
         chart.add_data(ref, titles_from_data=True)
         
     chart.series[0].graphicalProperties.noFill = True
-    
+
+    # 前後段班別性質上無差異，故所有班別長條統一同一色（與網頁預覽 --series-1 一致），
+    # 不用 Excel 預設的逐 series 自動配色。
     for s_idx in range(1, total_series):
         is_dur = (s_idx % 2 == 1)
         if is_dur:
             shift_num = (s_idx // 2) + 1
             chart.series[s_idx].tx = SeriesLabel(v=f"班別 {shift_num}")
+            chart.series[s_idx].graphicalProperties.solidFill = DUR_SERIES_COLOR
         else:
             chart.series[s_idx].graphicalProperties.noFill = True
             
