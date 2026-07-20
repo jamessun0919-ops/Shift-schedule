@@ -41,7 +41,7 @@
 
   <!-- 單日預覽區 -->
   <section id="day-preview-panel" class="panel hidden">
-    <h2>2. 單日預覽 &amp; 下載</h2>
+    <h2>3. 單日預覽 &amp; 下載</h2>
 
     <div id="health-banner" class="health-banner"></div>
     <ul id="anomalies-list" class="anomalies-list"></ul>
@@ -71,7 +71,7 @@
 <div id="confirm-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
-      <h2>3. 確認欄位對照</h2>
+      <h2>2. 確認欄位對照</h2>
       <button id="modal-close-btn" type="button" class="btn-icon" aria-label="關閉">×</button>
     </div>
 
@@ -101,7 +101,7 @@
           <div class="field-row">
             <label for="map-name-col">請確認人員姓名在表中第幾（直）欄？或點選按鍵由表格選擇</label>
             <div class="pick-group">
-              <input type="number" id="map-name-col" min="1">
+              <input type="text" id="map-name-col" readonly placeholder="例如 D">
               <button type="button" class="pick-btn" data-target="map-name-col" data-axis="col" data-label="姓名所在欄">從表格點選</button>
             </div>
           </div>
@@ -113,7 +113,7 @@
             </div>
           </div>
           <div class="field-row">
-            <label for="map-cols-per-day">表格中的上下班時間，是集中一格（填１）？還是上下班各一格（填２）？</label>
+            <label for="map-cols-per-day">一位員工的上下班時間，佔一個（直）欄填１，還是兩個（直）欄填２？</label>
             <input type="number" id="map-cols-per-day" min="1">
           </div>
           <div class="field-row">
@@ -121,15 +121,17 @@
             <input type="number" id="map-expected-rows" min="1" max="8">
           </div>
           <div class="field-row">
-            <label for="map-name-row-offset">姓名所在列（區塊內第幾列，從0算）</label>
-            <input type="number" id="map-name-row-offset" min="0">
+            <label for="map-name-row-offset">在每位員工的資料範圍內，姓名寫在第幾（橫）列？（範圍內第1列請填1，第2列請填2，以此類推）</label>
+            <input type="number" id="map-name-row-offset" min="1">
           </div>
         </div>
 
-        <h3>區塊列語意</h3>
+        <h3>請確認每一列分別記錄什麼內容</h3>
+        <p class="section-hint">依照上面「每位員工資料佔幾列」的設定，逐列確認實際內容——例如上班時間、下班時間、班別文字，或員編等其他資訊。</p>
         <div id="row-meanings-editor" class="row-meanings-editor"></div>
 
         <h3>另存為範本（選填）</h3>
+        <p class="section-hint">確認上面的欄位對照都正確後，可以在這裡取個名字存起來，下次上傳同一家店的班表時直接套用，不用重新設定。</p>
         <div class="field-row inline">
           <input type="text" id="template-name-input" placeholder="範本名稱">
           <button id="save-template-btn" type="button" class="btn btn-secondary">儲存範本</button>

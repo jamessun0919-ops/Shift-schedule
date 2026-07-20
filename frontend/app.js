@@ -14,6 +14,7 @@
   // ---- App state ----
   let currentFile = null;
   let currentPreviewRows = [];
+  let currentHiddenCols = new Set(); // 原始檔案中被隱藏的欄（1-based），預覽格線不顯示
   let confirmedTemplate = null; // template used for the last successful /api/preview
   let lastEmployees = [];       // full employees array from last /api/preview
 
@@ -115,6 +116,7 @@
       fd.append("file", file);
       const analyzeResult = await fetchJson(`${API}/analyze`, { method: "POST", body: fd });
       currentPreviewRows = analyzeResult.preview_rows;
+      currentHiddenCols = new Set(analyzeResult.hidden_cols || []);
 
       let template = analyzeResult.suggested_template;
 
@@ -141,11 +143,15 @@
   function openModal(template) {
     mapSheetName.value = template.sheet_name || "";
     mapHeaderRow.value = template.header_row_index || 1;
-    mapNameCol.value = template.mapping?.name_col || 1;
-    mapFirstDayCol.value = colLetter(template.mapping?.first_day_col || 1);
+    mapNameCol.value = colLetter(template.mapping?.name_col || 1);
+    mapFirstDayCol.value = guessFirstDayCellRef(
+      currentPreviewRows,
+      template.header_row_index || 1,
+      template.mapping?.first_day_col || 1
+    );
     mapColsPerDay.value = template.mapping?.cols_per_day || 2;
     mapExpectedRows.value = template.block?.expected_rows || 1;
-    mapNameRowOffset.value = template.block?.name_row_offset || 0;
+    mapNameRowOffset.value = (template.block?.name_row_offset || 0) + 1;
     templateNameInput.value = template.template_name || "";
 
     renderPreviewGrid(currentPreviewRows);
@@ -175,6 +181,22 @@
     return s;
   }
 
+  // 純顯示用途：在原始預覽列中，猜一個看起來像是真正資料開始的列號，
+  // 組成完整儲存格參照（如 N6），讓「上下班起始格」預設值一眼就懂。
+  // 只挑資料列，不影響送給後端的欄位對照（後端只吃欄號，列僅供確認）。
+  function guessFirstDayCellRef(rows, headerRowIndex, col) {
+    let fallbackRow = null;
+    for (let r = headerRowIndex; r < (rows || []).length; r++) {
+      const val = rows[r][col - 1];
+      if (val === null || val === undefined || val === "") continue;
+      if (fallbackRow === null) fallbackRow = r + 1;
+      if (typeof val === "number" || (typeof val === "string" && !isNaN(Number(val)))) {
+        return colLetter(col) + (r + 1);
+      }
+    }
+    return colLetter(col) + (fallbackRow || (headerRowIndex + 1));
+  }
+
   // 從儲存格參照（如 "C5"）取出欄號（C -> 3）；只取欄，列僅供顯示確認
   function refToCol(ref) {
     const m = String(ref).toUpperCase().match(/^[A-Z]+/);
@@ -193,6 +215,7 @@
     const headRow = document.createElement("tr");
     headRow.appendChild(document.createElement("th"));
     for (let c = 1; c <= maxCols; c++) {
+      if (currentHiddenCols.has(c)) continue;
       const th = document.createElement("th");
       th.textContent = colLetter(c);
       headRow.appendChild(th);
@@ -210,6 +233,7 @@
       rowNumTd.dataset.row = String(rIdx + 1);
       tr.appendChild(rowNumTd);
       for (let c = 0; c < maxCols; c++) {
+        if (currentHiddenCols.has(c + 1)) continue;
         const td = document.createElement("td");
         td.dataset.row = String(rIdx + 1);
         td.dataset.col = String(c + 1);
@@ -232,7 +256,7 @@
     tbody.querySelectorAll("td.hl-col").forEach((el) => el.classList.remove("hl-col"));
     tbody.querySelectorAll("tr.hl-row").forEach((el) => el.classList.remove("hl-row"));
     const hr = parseInt(mapHeaderRow.value, 10);
-    const cols = [parseInt(mapNameCol.value, 10), refToCol(mapFirstDayCol.value)];
+    const cols = [refToCol(mapNameCol.value), refToCol(mapFirstDayCol.value)];
     if (hr) {
       const tr = tbody.querySelector(`tr[data-row="${hr}"]`);
       if (tr) tr.classList.add("hl-row");
@@ -298,7 +322,7 @@
     if (!td) return;
     let val;
     if (armed.axis === "row") val = td.dataset.row;
-    else if (armed.axis === "col") val = td.dataset.col;
+    else if (armed.axis === "col") val = colLetter(parseInt(td.dataset.col, 10));
     else if (armed.axis === "cell" && td.dataset.col && td.dataset.row) {
       val = colLetter(parseInt(td.dataset.col, 10)) + td.dataset.row;
     }
@@ -425,13 +449,13 @@
       sheet_name: mapSheetName.value,
       header_row_index: parseInt(mapHeaderRow.value, 10) || 1,
       mapping: {
-        name_col: parseInt(mapNameCol.value, 10) || 1,
+        name_col: refToCol(mapNameCol.value) || 1,
         first_day_col: refToCol(mapFirstDayCol.value) || 1,
         cols_per_day: parseInt(mapColsPerDay.value, 10) || 2,
       },
       block: {
         expected_rows: parseInt(mapExpectedRows.value, 10) || 1,
-        name_row_offset: parseInt(mapNameRowOffset.value, 10) || 0,
+        name_row_offset: (parseInt(mapNameRowOffset.value, 10) || 1) - 1,
         row_meanings: collectRowMeanings(),
       },
     };

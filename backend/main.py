@@ -14,7 +14,7 @@ from starlette.background import BackgroundTask
 
 from backend.generator import generate_ods, generate_xlsx
 from backend.heuristics import guess_template
-from backend.parser import extract_top_preview, parse_schedule
+from backend.parser import extract_top_preview, get_hidden_columns, parse_schedule
 
 app = FastAPI(title="班表格式轉換工具 API")
 
@@ -76,6 +76,7 @@ async def analyze(file: UploadFile = File(...)):
     try:
         template = guess_template(tmp_path)
         preview_rows = extract_top_preview(tmp_path, template["sheet_name"])
+        hidden_cols = sorted(get_hidden_columns(tmp_path, template["sheet_name"]))
     except HTTPException:
         raise
     except Exception as e:
@@ -86,6 +87,7 @@ async def analyze(file: UploadFile = File(...)):
     return {
         "suggested_template": template,
         "preview_rows": preview_rows,
+        "hidden_cols": hidden_cols,
     }
 
 

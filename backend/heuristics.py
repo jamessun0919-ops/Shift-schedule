@@ -166,7 +166,10 @@ def guess_template(file_path):
         from backend.parser import read_xlsx_rows as reader
         import openpyxl
         wb = openpyxl.load_workbook(file_path, read_only=True)
-        sheet_names = wb.sheetnames
+        try:
+            sheet_names = wb.sheetnames
+        finally:
+            wb.close()
 
     # Choose sheet: prefer names containing "整月", "外場", "內場", "班表"
     sheet_candidates = [n for n in sheet_names if any(k in n for k in ["整月", "外場", "內場", "班表"])]

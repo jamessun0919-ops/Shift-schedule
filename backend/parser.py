@@ -147,18 +147,61 @@ def read_xlsx_rows(xlsx_path, sheet_name):
     Returns a list of dicts: {col_idx: value} (1-based col_idx).
     """
     wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
-    if sheet_name not in wb.sheetnames:
-        raise ValueError(f"找不到工作表: {sheet_name}")
-    
-    ws = wb[sheet_name]
-    rows = []
-    for row in ws.iter_rows(values_only=True):
-        cells = {}
-        for col_idx, val in enumerate(row, 1):
-            if val is not None:
-                cells[col_idx] = val
-        rows.append(cells)
-    return rows
+    try:
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"找不到工作表: {sheet_name}")
+
+        ws = wb[sheet_name]
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            cells = {}
+            for col_idx, val in enumerate(row, 1):
+                if val is not None:
+                    cells[col_idx] = val
+            rows.append(cells)
+        return rows
+    finally:
+        wb.close()
+
+def get_hidden_columns(file_path, sheet_name):
+    """
+    Returns a set of 1-based column indices that are hidden in the source file
+    (e.g. user collapsed helper columns in Excel/Calc before exporting).
+    """
+    hidden = set()
+    if file_path.endswith(".ods"):
+        with zipfile.ZipFile(file_path, "r") as z:
+            root = ET.fromstring(z.read("content.xml"))
+
+        table = None
+        for t in root.iter(_tag("table", "table")):
+            if t.get(_tag("table", "name")) == sheet_name:
+                table = t
+                break
+        if table is None:
+            return hidden
+
+        col = 1
+        for col_el in table.iter(_tag("table", "table-column")):
+            repeat = int(col_el.get(_tag("table", "number-columns-repeated"), "1"))
+            visibility = col_el.get(_tag("table", "visibility"), "visible")
+            if visibility != "visible":
+                for c in range(col, col + repeat):
+                    hidden.add(c)
+            col += repeat
+    else:
+        wb = openpyxl.load_workbook(file_path, read_only=False)
+        try:
+            if sheet_name not in wb.sheetnames:
+                return hidden
+            ws = wb[sheet_name]
+            for dim in ws.column_dimensions.values():
+                if dim.hidden and dim.min and dim.max:
+                    for c in range(dim.min, dim.max + 1):
+                        hidden.add(c)
+        finally:
+            wb.close()
+    return hidden
 
 def extract_top_preview(file_path, sheet_name, max_rows=15):
     """

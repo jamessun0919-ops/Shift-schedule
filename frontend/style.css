@@ -193,6 +193,7 @@ input[readonly] {
 }
 .modal-col { min-width: 0; }
 .modal-col h3 { font-size: 0.95rem; margin: 0 0 10px; color: var(--text-secondary); }
+.section-hint { font-size: 0.8rem; color: var(--text-muted); margin: -6px 0 10px; }
 .modal-footer {
   display: flex;
   align-items: center;
