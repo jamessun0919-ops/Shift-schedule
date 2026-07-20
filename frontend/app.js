@@ -39,6 +39,18 @@
   const mapColsPerDay = $("map-cols-per-day");
   const mapExpectedRows = $("map-expected-rows");
   const mapNameRowOffset = $("map-name-row-offset");
+  const mapAxisStart = $("map-axis-start");
+  const mapAxisEnd = $("map-axis-end");
+
+  // 座標軸下拉選單：0~24 整點
+  for (const el of [mapAxisStart, mapAxisEnd]) {
+    for (let h = 0; h <= 24; h++) {
+      const opt = document.createElement("option");
+      opt.value = h;
+      opt.textContent = `${h} 點`;
+      el.appendChild(opt);
+    }
+  }
 
   const rowMeaningsEditor = $("row-meanings-editor");
   const templateNameInput = $("template-name-input");
@@ -150,6 +162,8 @@
     mapColsPerDay.value = template.mapping?.cols_per_day || 2;
     mapExpectedRows.value = template.block?.expected_rows || 1;
     mapNameRowOffset.value = (template.block?.name_row_offset || 0) + 1;
+    mapAxisStart.value = template.display?.axis_start ?? 8;
+    mapAxisEnd.value = template.display?.axis_end ?? 24;
     // 已存範本（有 template_id）沿用原本名稱；剛分析出的猜測範本則預設「品牌文字＋範本」
     const scopeId = safeScopeId();
     templateNameInput.value = template.template_id
@@ -434,6 +448,11 @@
         name_row_offset: (parseInt(mapNameRowOffset.value, 10) || 1) - 1,
         row_meanings: collectRowMeanings(),
       },
+      display: {
+        // parseInt(...) || default 在此不適用：0 點是合法的起始值，用 "||" 會被誤判為假值蓋掉
+        axis_start: Number.isNaN(parseInt(mapAxisStart.value, 10)) ? 8 : parseInt(mapAxisStart.value, 10),
+        axis_end: Number.isNaN(parseInt(mapAxisEnd.value, 10)) ? 24 : parseInt(mapAxisEnd.value, 10),
+      },
     };
   }
 
@@ -492,8 +511,8 @@
     dayPreviewPanel.classList.remove("hidden");
 
     if (result.is_healthy) {
-      healthBanner.textContent = "健康檢查通過";
-      healthBanner.className = "health-banner ok";
+      healthBanner.textContent = "";
+      healthBanner.className = "health-banner hidden";
     } else {
       healthBanner.textContent = "健康檢查警告：解析結果可能不正確，請檢查下方異常訊息與欄位對照";
       healthBanner.className = "health-banner warn";
@@ -523,8 +542,6 @@
   printBtn.addEventListener("click", () => window.print());
 
   const SERIES_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)"];
-  const AXIS_START = 8;  // 08:00
-  const AXIS_END = 24;   // 24:00
 
   function fmtHour(h) {
     if (h === null || h === undefined) return "";
@@ -536,6 +553,9 @@
   function renderDayGantt(day) {
     dayTitle.textContent = `${day} 日 排班預覽`;
     ganttContainer.innerHTML = "";
+
+    const AXIS_START = confirmedTemplate?.display?.axis_start ?? 8;
+    const AXIS_END = confirmedTemplate?.display?.axis_end ?? 24;
 
     const axis = document.createElement("div");
     axis.className = "gantt-axis";

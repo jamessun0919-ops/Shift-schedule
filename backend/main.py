@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
 from backend.generator import generate_ods, generate_xlsx
-from backend.heuristics import guess_template
+from backend.heuristics import guess_axis_range, guess_template
 from backend.parser import extract_top_preview, get_hidden_columns, parse_schedule
 
 app = FastAPI(title="班表格式轉換工具 API")
@@ -77,6 +77,13 @@ async def analyze(file: UploadFile = File(...)):
         template = guess_template(tmp_path)
         preview_rows = extract_top_preview(tmp_path, template["sheet_name"])
         hidden_cols = sorted(get_hidden_columns(tmp_path, template["sheet_name"]))
+        try:
+            # 座標軸範圍猜測是錦上添花的顯示用預設值，用猜出的範本試解析失敗
+            # 不該讓整個 /api/analyze 跟著失敗，靜默退回預設 8~24 即可。
+            parsed = parse_schedule(tmp_path, template)
+            template["display"] = guess_axis_range(parsed["employees"])
+        except Exception:
+            template["display"] = {"axis_start": 8, "axis_end": 24}
     except HTTPException:
         raise
     except Exception as e:

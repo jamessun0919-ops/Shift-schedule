@@ -16,6 +16,7 @@ NS = {
     "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
     "chart": "urn:oasis:names:tc:opendocument:xmlns:chart:1.0",
     "draw": "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0",
+    "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
     "xlink": "http://www.w3.org/1999/xlink",
 }
 
@@ -37,9 +38,13 @@ def generate_xlsx(employees, output_path, template_config):
     """
     Generates a monthly XLSX workbook. Each day is a sheet containing the schedule table and Gantt chart.
     """
+    display_config = template_config.get("display") or {}
+    axis_start = display_config.get("axis_start", 8)
+    axis_end = display_config.get("axis_end", 24)
+
     wb = Workbook()
     wb.remove(wb.active) # Remove default sheet
-    
+
     for day in range(1, 32):
         ws = wb.create_sheet(title=f"{day}")
         
@@ -99,7 +104,7 @@ def generate_xlsx(employees, output_path, template_config):
         for h_idx, h_name in enumerate(helper_headers):
             ws.cell(row=1, column=start_helper_col + h_idx, value=h_name)
             
-        day_start = 8 / 24
+        day_start = axis_start / 24
         for idx, emp in enumerate(employees):
             r = idx + 2
             day_info = emp["days"][day]
@@ -132,33 +137,47 @@ def generate_xlsx(employees, output_path, template_config):
             for s_idx, val in enumerate(durations_and_gaps):
                 ws.cell(row=r, column=start_helper_col + 1 + s_idx, value=val)
                 
-        add_xlsx_gantt_chart(ws, len(employees), n_shifts, start_helper_col)
-        
+        add_xlsx_gantt_chart(ws, len(employees), n_shifts, start_helper_col, axis_start, axis_end)
+
     wb.save(output_path)
     print(f"Generated XLSX schedule: {output_path}")
 
-def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col):
+def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start=8, axis_end=24):
     chart = BarChart()
     chart.type = "bar"
     chart.grouping = "stacked"
     chart.overlap = 100
     chart.title = f"{ws.title}日 排班長條圖"
-    chart.y_axis.title = None
-    chart.x_axis.title = "時間"
-    chart.x_axis.number_format = "h:mm"
-    chart.x_axis.scaling.min = 8 / 24
-    chart.x_axis.scaling.max = 23 / 24
-    
+
     last_row = n_employees + 1
-    cats = Reference(ws, min_col=1, min_row=2, max_row=last_row)
-    chart.set_categories(cats)
-    
+
     total_series = 2 * n_shifts
     for s_idx in range(total_series):
         col = start_helper_col + s_idx
         ref = Reference(ws, min_col=col, min_row=1, max_row=last_row)
         chart.add_data(ref, titles_from_data=True)
-        
+
+    # set_categories() 必須在 add_data() 之後呼叫：呼叫當下 chart.series 是空的，
+    # 姓名分類永遠不會被寫進任何 series，長條圖左側會變成 Excel 自動編號 1..N。
+    cats = Reference(ws, min_col=1, min_row=2, max_row=last_row)
+    chart.set_categories(cats)
+
+    # 姓名軸（x_axis，類別軸）：預設由下往上排列，reverse 成由上往下。
+    chart.x_axis.title = None
+    chart.x_axis.scaling.orientation = "maxMin"
+
+    # 時間軸（y_axis，數值軸）：原本誤設定在 x_axis 上，導致真正的數值軸完全沒有
+    # 格式化（顯示 0~1 的原始小數）；改回設在 y_axis，並移到圖表上方、
+    # 刻度間隔比照網頁版每小時一格。
+    # 用 "[h]:mm"（經過時間格式）而非 "h:mm"：後者在數值剛好等於 1.0（=24:00）
+    # 時，Excel 會把它當成隔天 0:00 顯示，導致座標軸標籤回繞成 "0:00"。
+    chart.y_axis.title = "時間"
+    chart.y_axis.number_format = "[h]:mm"
+    chart.y_axis.scaling.min = axis_start / 24
+    chart.y_axis.scaling.max = axis_end / 24
+    chart.y_axis.majorUnit = 1 / 24
+    chart.y_axis.crosses = "max"
+
     chart.series[0].graphicalProperties.noFill = True
 
     # 前後段班別性質上無差異，故所有班別長條統一同一色（與網頁預覽 --series-1 一致），
@@ -218,7 +237,11 @@ def generate_ods(employees, output_path, template_config, template_ods_path="白
     block_config = template_config["block"]
     row_meanings = block_config["row_meanings"]
     n_shifts = _get_n_shifts(row_meanings)
-    
+
+    display_config = template_config.get("display") or {}
+    axis_start = display_config.get("axis_start", 8)
+    axis_end = display_config.get("axis_end", 24)
+
     # Pre-parse content.xml to identify sheet to chart object mapping
     chart_mappings = {} # day_str -> chart_object_dir_name
     with zipfile.ZipFile(template_ods_path, "r") as z:
@@ -252,7 +275,7 @@ def generate_ods(employees, output_path, template_config, template_ods_path="白
         headers.extend(helper_headers)
         sheet_rows.append(headers)
         
-        day_start = 8.0
+        day_start = float(axis_start)
         for emp in employees:
             row_data = [emp["name"]]
             day_info = emp["days"][day]
@@ -377,7 +400,24 @@ def generate_ods(employees, output_path, template_config, template_ods_path="白
                             
                             series.set(_tag("chart", "values-cell-range-address"), val_range)
                             series.set(_tag("chart", "label-cell-address"), label_range)
-                            
+
+                        # 座標軸範圍：y 軸（時間值軸，非分類軸）的最小/最大值寫在
+                        # 它引用的 style:style 樣式上（純數字座標軸，無 xlsx 時間格式
+                        # 回繞問題，可直接寫入 axis_end，不需要額外修正）。
+                        axis_style_name = None
+                        for axis_el in root.iter(_tag("chart", "axis")):
+                            if axis_el.get(_tag("chart", "dimension")) == "y":
+                                axis_style_name = axis_el.get(_tag("chart", "style-name"))
+                                break
+                        if axis_style_name:
+                            for style_el in root.iter(_tag("style", "style")):
+                                if style_el.get(_tag("style", "name")) == axis_style_name:
+                                    props = style_el.find(_tag("style", "chart-properties"))
+                                    if props is not None:
+                                        props.set(_tag("chart", "minimum"), str(axis_start))
+                                        props.set(_tag("chart", "maximum"), str(axis_end))
+                                    break
+
                         local_table = root.find(f".//{_tag('table', 'table')}")
                         if local_table is not None:
                             for child in list(local_table):

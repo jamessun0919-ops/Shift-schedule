@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import datetime
 from collections import Counter
 from backend.parser import read_ods_rows, read_xlsx_rows
@@ -373,3 +374,39 @@ def guess_template(file_path):
     }
 
     return suggested_template
+
+def guess_axis_range(employees, n_days=7, default_start=8, default_end=24):
+    """
+    Best-effort guess of the Gantt chart's time axis range, from actually parsed
+    shift data (not structural guessing). Scans the first n_days across all
+    employees, taking the earliest shift start (rounded down) and latest shift
+    end (rounded up), for display purposes only -- caller should fall back to
+    (default_start, default_end) if this raises or the data has no valid shifts.
+    """
+    min_start = None
+    max_end = None
+    for emp in employees:
+        for d in range(1, n_days + 1):
+            day_info = emp.get("days", {}).get(d)
+            if not day_info:
+                continue
+            for shift in day_info.get("shifts", []):
+                s, e = shift.get("start"), shift.get("end")
+                # 排除 0 長度的佔位班別（例如某些範本用 0:00-0:00 代表「無排班」而非
+                # 留空），否則會把座標軸誤拉到 0 點。
+                if s is None or e is None or e <= s:
+                    continue
+                if min_start is None or s < min_start:
+                    min_start = s
+                if max_end is None or e > max_end:
+                    max_end = e
+
+    if min_start is None or max_end is None:
+        return {"axis_start": default_start, "axis_end": default_end}
+
+    axis_start = max(0, min(24, math.floor(min_start)))
+    axis_end = max(0, min(24, math.ceil(max_end)))
+    if axis_end <= axis_start:
+        return {"axis_start": default_start, "axis_end": default_end}
+
+    return {"axis_start": axis_start, "axis_end": axis_end}
