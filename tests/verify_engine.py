@@ -4,7 +4,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from backend.parser import parse_schedule
-from backend.generator import generate_xlsx, generate_ods
+from backend.generator import generate_xlsx
 from backend.heuristics import guess_template
 
 white_mist_template = {
@@ -46,12 +46,9 @@ def test_original_parsing():
         emp0 = result['employees'][0]
         print(f"TEST1 Day 1 Shifts: {emp0['days'][1]['shifts']}")
         
-    # Generate XLSX and ODS tests
+    # Generate XLSX test
     out_xlsx = os.path.join("tests", "output_test.xlsx")
     generate_xlsx(result['employees'], out_xlsx, white_mist_template)
-    
-    out_ods = os.path.join("tests", "output_test.ods")
-    generate_ods(result['employees'], out_ods, white_mist_template, template_ods_path=ods_file)
 
 def test_heuristics():
     print("\n=== Testing Heuristic Layout Detection ===")

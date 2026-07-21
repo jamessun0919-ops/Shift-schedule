@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from backend.generator import generate_ods, generate_xlsx
+from backend.generator import generate_xlsx
 from backend.heuristics import guess_axis_range, guess_template
 from backend.parser import extract_top_preview, get_hidden_columns, parse_schedule
 
@@ -27,7 +27,6 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "templates"
-BASE_ODS_TEMPLATE = BASE_DIR / "data" / "白霧.ods"
 
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20MB
 ALLOWED_EXTENSIONS = {".xlsx", ".ods"}
@@ -125,32 +124,18 @@ async def preview(file: UploadFile = File(...), template: str = Form(...)):
 async def convert(
     file: UploadFile = File(...),
     template: str = Form(...),
-    output_format: str = Form(None),
 ):
     tmp_path = _save_upload_to_temp(file)
     template_dict = _parse_template_json(template)
-
-    fmt = (output_format or Path(file.filename).suffix.lstrip(".")).lower()
-    if fmt not in ("xlsx", "ods"):
-        os.remove(tmp_path)
-        raise HTTPException(400, "output_format 僅支援 xlsx 或 ods")
 
     out_path = None
     try:
         result = parse_schedule(tmp_path, template_dict)
 
-        out_fd, out_path = tempfile.mkstemp(suffix=f".{fmt}")
+        out_fd, out_path = tempfile.mkstemp(suffix=".xlsx")
         os.close(out_fd)
 
-        if fmt == "xlsx":
-            generate_xlsx(result["employees"], out_path, template_dict)
-        else:
-            generate_ods(
-                result["employees"],
-                out_path,
-                template_dict,
-                template_ods_path=str(BASE_ODS_TEMPLATE),
-            )
+        generate_xlsx(result["employees"], out_path, template_dict)
     except HTTPException:
         raise
     except Exception as e:
@@ -162,7 +147,7 @@ async def convert(
 
     return FileResponse(
         out_path,
-        filename=f"converted.{fmt}",
+        filename="converted.xlsx",
         background=BackgroundTask(os.remove, out_path),
     )
 

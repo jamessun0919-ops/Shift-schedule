@@ -67,7 +67,6 @@
   const printBtn = $("print-btn");
   const dayTitle = $("day-title");
   const ganttContainer = $("gantt-container");
-  const outputFormatSelect = $("output-format");
   const convertBtn = $("convert-btn");
   const convertStatus = $("convert-status");
 
@@ -631,7 +630,6 @@
       const fd = new FormData();
       fd.append("file", currentFile);
       fd.append("template", JSON.stringify(confirmedTemplate));
-      fd.append("output_format", outputFormatSelect.value);
 
       const res = await fetch(`${API}/convert`, { method: "POST", body: fd });
       if (!res.ok) {
@@ -643,7 +641,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `converted.${outputFormatSelect.value}`;
+      a.download = "converted.xlsx";
       document.body.appendChild(a);
       a.click();
       a.remove();
