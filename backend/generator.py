@@ -225,7 +225,7 @@ def _col_letter(col_idx):
         result = chr(65 + remainder) + result
     return result
 
-def generate_ods(employees, output_path, template_config, template_ods_path="白霧.ods"):
+def generate_ods(employees, output_path, template_config, template_ods_path="data/白霧.ods"):
     """
     Generates a monthly ODS file by taking a template ODS, clearing day sheets 1-31, 
     and writing the parsed data and helper columns.

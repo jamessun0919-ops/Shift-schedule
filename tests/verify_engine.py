@@ -30,7 +30,7 @@ white_mist_template = {
 
 def test_original_parsing():
     print("=== Testing Original Schedule Parsing (白霧.ods) ===")
-    ods_file = "白霧.ods"
+    ods_file = os.path.join("data", "白霧.ods")
     if not os.path.exists(ods_file):
         print(f"Error: {ods_file} not found.")
         return
@@ -51,16 +51,16 @@ def test_original_parsing():
     generate_xlsx(result['employees'], out_xlsx, white_mist_template)
     
     out_ods = os.path.join("tests", "output_test.ods")
-    generate_ods(result['employees'], out_ods, white_mist_template, template_ods_path="白霧.ods")
+    generate_ods(result['employees'], out_ods, white_mist_template, template_ods_path=ods_file)
 
 def test_heuristics():
     print("\n=== Testing Heuristic Layout Detection ===")
     files = [
-        "範例班表1.ods",
-        "範例班表2.ods",
-        "範例班表3.ods",
-        "範例班表4.xlsx",
-        "範例班表5.ods"
+        os.path.join("data", "範例班表1MORE.ods"),
+        os.path.join("data", "範例班表2MOU.ods"),
+        os.path.join("data", "範例班表3MEMBER.ods"),
+        os.path.join("data", "範例班表4TAO.xlsx"),
+        os.path.join("data", "範例班表5WANG.ods")
     ]
     
     for f in files:
@@ -86,7 +86,8 @@ def test_heuristics():
                 print(f"  Day 1 Shifts: {sample_emp['days'][1]['shifts']}")
                 
                 # Write a converted test sheet to verify generator
-                out_path = os.path.join("tests", f"converted_{f.split('.')[0]}.xlsx")
+                base_name = os.path.basename(f)
+                out_path = os.path.join("tests", f"converted_{base_name.split('.')[0]}.xlsx")
                 generate_xlsx(parse_result['employees'], out_path, template)
                 print(f"  Saved converted XLSX to: {out_path}")
         except Exception as e:

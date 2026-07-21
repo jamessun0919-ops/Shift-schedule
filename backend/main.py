@@ -27,7 +27,7 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "templates"
-BASE_ODS_TEMPLATE = BASE_DIR / "白霧.ods"
+BASE_ODS_TEMPLATE = BASE_DIR / "data" / "白霧.ods"
 
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20MB
 ALLOWED_EXTENSIONS = {".xlsx", ".ods"}
