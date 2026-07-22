@@ -140,6 +140,7 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
     # 輔助欄（base/dur/gap）在上面被隱藏，但圖表仍需讀取其資料繪圖：
     # Excel 圖表預設 plotVisOnly=true（只畫可見儲存格），必須關閉。
     chart.visible_cells_only = False
+    chart.legend = None
 
     last_row = n_employees + 1
 
@@ -162,6 +163,11 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
     # 強制間隔為 1，確保每一位員工的姓名都會顯示。
     chart.x_axis.tickLblSkip = 1
     chart.x_axis.tickMarkSkip = 1
+
+    # 實測發現 LibreOffice 即使 tickLblSkip=1 仍會依「圖表高度 ÷ 員工數」自行
+    # 算間隔並跳過標籤，需要圖表本身夠高才會真的顯示全部姓名。以 10 人的高度
+    # 為下限（避免人少時圖表過矮），不設上限、依員工數等比放大。
+    chart.height = max(10, n_employees) * 0.8
 
     # 時間軸（y_axis，數值軸）：原本誤設定在 x_axis 上，導致真正的數值軸完全沒有
     # 格式化（顯示 0~1 的原始小數）；改回設在 y_axis，並移到圖表上方、
@@ -187,8 +193,7 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
             chart.series[s_idx].graphicalProperties.solidFill = DUR_SERIES_COLOR
         else:
             chart.series[s_idx].graphicalProperties.noFill = True
-            
-    chart.height = max(8, n_employees * 0.6)
+
     chart.width = 24
     
     chart_col = chr(65 + start_helper_col + total_series + 1)
