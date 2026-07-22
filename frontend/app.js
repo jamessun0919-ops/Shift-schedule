@@ -17,6 +17,7 @@
   let currentHiddenCols = new Set(); // 原始檔案中被隱藏的欄（1-based），預覽格線不顯示
   let confirmedTemplate = null; // template used for the last successful /api/preview
   let lastEmployees = [];       // full employees array from last /api/preview
+  let currentMonth = null;      // 從本次上傳檔案內容判斷出的月份（非範本欄位，每次上傳重新判斷）
 
   // ---- DOM refs ----
   const $ = (id) => document.getElementById(id);
@@ -494,6 +495,7 @@
 
       confirmedTemplate = template;
       lastEmployees = result.employees;
+      currentMonth = result.month;
 
       setStatus(previewResultText, `解析出 ${result.employees_count} 位員工`, "ok");
       showDayPreviewPanel(result);
@@ -550,7 +552,7 @@
   }
 
   function renderDayGantt(day) {
-    dayTitle.textContent = `${day} 日 排班預覽`;
+    dayTitle.textContent = currentMonth ? `${currentMonth} 月 ${day} 日 排班預覽` : `${day} 日 排班預覽`;
     ganttContainer.innerHTML = "";
 
     const AXIS_START = confirmedTemplate?.display?.axis_start ?? 8;

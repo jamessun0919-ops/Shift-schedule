@@ -227,19 +227,23 @@ def parse_schedule(file_path, template):
     """
     Generic template-driven parser.
     """
-    from backend.heuristics import find_block_anchors
+    from backend.heuristics import find_block_anchors, guess_month
     sheet_name = template["sheet_name"]
     if file_path.endswith(".ods"):
         rows = read_ods_rows(file_path, sheet_name)
     else:
         rows = read_xlsx_rows(file_path, sheet_name)
-        
+
     name_col = template["mapping"]["name_col"]
     first_day_col = template["mapping"]["first_day_col"]
     cols_per_day = template["mapping"]["cols_per_day"]
-    
+
     header_row = template.get("header_row_index", 1) # 1-based index
     start_scan_idx = header_row # start checking blocks from header_row (index start_scan_idx - 1 in 0-based)
+
+    # 月份每次都從這次實際上傳的檔案內容重新判斷，不寫入範本：同一份範本可能
+    # 被套用在不同月份的檔案上，寫死會導致月份卡在建立範本當下的舊值。
+    month = guess_month(rows, header_row - 1, first_day_col, cols_per_day)
     
     block_config = template["block"]
     expected_rows = block_config["expected_rows"]
@@ -360,7 +364,8 @@ def parse_schedule(file_path, template):
     return {
         "employees": employees,
         "anomalies": anomalies,
-        "is_healthy": is_healthy
+        "is_healthy": is_healthy,
+        "month": month
     }
 
 def perform_health_check(employees):

@@ -19,7 +19,7 @@ def _get_n_shifts(row_meanings):
             n_shifts = max(n_shifts, 2)
     return max(1, n_shifts)
 
-def generate_xlsx(employees, output_path, template_config):
+def generate_xlsx(employees, output_path, template_config, month=None):
     """
     Generates a monthly XLSX workbook. Each day is a sheet containing the schedule table and Gantt chart.
     """
@@ -126,17 +126,18 @@ def generate_xlsx(employees, output_path, template_config):
             for s_idx, val in enumerate(durations_and_gaps):
                 ws.cell(row=r, column=start_helper_col + 1 + s_idx, value=val)
                 
-        add_xlsx_gantt_chart(ws, len(employees), n_shifts, start_helper_col, axis_start, axis_end)
+        add_xlsx_gantt_chart(ws, len(employees), n_shifts, start_helper_col, axis_start, axis_end, month)
 
     wb.save(output_path)
     print(f"Generated XLSX schedule: {output_path}")
 
-def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start=8, axis_end=24):
+def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start=8, axis_end=24, month=None):
     chart = BarChart()
     chart.type = "bar"
     chart.grouping = "stacked"
     chart.overlap = 100
-    chart.title = f"{ws.title}日 排班長條圖"
+    month_prefix = f"{month}月" if month else ""
+    chart.title = f"{month_prefix}{ws.title}日 排班長條圖"
     # 輔助欄（base/dur/gap）在上面被隱藏，但圖表仍需讀取其資料繪圖：
     # Excel 圖表預設 plotVisOnly=true（只畫可見儲存格），必須關閉。
     chart.visible_cells_only = False
@@ -170,8 +171,7 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
     chart.height = max(10, n_employees) * 0.8
 
     # 時間軸（y_axis，數值軸）：原本誤設定在 x_axis 上，導致真正的數值軸完全沒有
-    # 格式化（顯示 0~1 的原始小數）；改回設在 y_axis，並移到圖表上方、
-    # 刻度間隔比照網頁版每小時一格。
+    # 格式化（顯示 0~1 的原始小數）；改回設在 y_axis，刻度間隔比照網頁版每小時一格。
     # 用 "[h]:mm"（經過時間格式）而非 "h:mm"：後者在數值剛好等於 1.0（=24:00）
     # 時，Excel 會把它當成隔天 0:00 顯示，導致座標軸標籤回繞成 "0:00"。
     chart.y_axis.title = "時間"
@@ -179,7 +179,6 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
     chart.y_axis.scaling.min = axis_start / 24
     chart.y_axis.scaling.max = axis_end / 24
     chart.y_axis.majorUnit = 1 / 24
-    chart.y_axis.crosses = "max"
 
     chart.series[0].graphicalProperties.noFill = True
 
@@ -195,7 +194,30 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
             chart.series[s_idx].graphicalProperties.noFill = True
 
     chart.width = 24
-    
+
+    # 上方時間軸（次座標軸）：使用者要求時間軸比照網頁預覽顯示在圖表上方。
+    # 實測發現直接調整同一數值軸的 crosses/axPos/tickLblPos 這幾個 OOXML
+    # 屬性，在 LibreOffice、Google 試算表皆會被忽略、軸線位置不會改變，故改用
+    # 「新增一組次座標數值軸」這個較多軟體都支援的做法：另建一個隱藏 series 的
+    # 圖表，設定與主座標相同的時間刻度，用 openpyxl 的 chart += chart2 合併，
+    # 使其成為次座標軸；經 headless 渲染確認會顯示在圖表上方，且姓名軸（類別軸）
+    # 因兩個圖表共用同一組類別，不會被重複畫出。使用者確認上下兩軸都保留。
+    top_axis_chart = BarChart()
+    top_axis_chart.type = "bar"
+    top_ref = Reference(ws, min_col=start_helper_col, min_row=1, max_row=last_row)
+    top_axis_chart.add_data(top_ref, titles_from_data=True)
+    top_axis_chart.set_categories(cats)
+    top_axis_chart.series[0].graphicalProperties.noFill = True
+    top_axis_chart.y_axis.axId = 200
+    top_axis_chart.y_axis.title = None
+    top_axis_chart.y_axis.number_format = "[h]:mm"
+    top_axis_chart.y_axis.scaling.min = axis_start / 24
+    top_axis_chart.y_axis.scaling.max = axis_end / 24
+    top_axis_chart.y_axis.majorUnit = 1 / 24
+    top_axis_chart.y_axis.crosses = "max"
+    top_axis_chart.x_axis.delete = True
+    chart += top_axis_chart
+
     chart_col = chr(65 + start_helper_col + total_series + 1)
     ws.add_chart(chart, f"{chart_col}2")
 

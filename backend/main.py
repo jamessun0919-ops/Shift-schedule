@@ -117,6 +117,7 @@ async def preview(file: UploadFile = File(...), template: str = Form(...)):
         "anomalies": result["anomalies"],
         "is_healthy": result["is_healthy"],
         "employees": employees,
+        "month": result["month"],
     }
 
 
@@ -135,7 +136,7 @@ async def convert(
         out_fd, out_path = tempfile.mkstemp(suffix=".xlsx")
         os.close(out_fd)
 
-        generate_xlsx(result["employees"], out_path, template_dict)
+        generate_xlsx(result["employees"], out_path, template_dict, month=result["month"])
     except HTTPException:
         raise
     except Exception as e:

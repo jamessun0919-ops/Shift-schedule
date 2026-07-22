@@ -32,8 +32,41 @@ def is_date_or_day_num(val):
         return True
     if re.match(r"^\d{1,2}/\d{1,2}$", val_str):
         return True
-        
+
     return False
+
+def guess_month(rows, header_row_idx, first_day_col, cols_per_day, max_days=31):
+    """
+    從日期列的儲存格內容猜測班表所屬月份，僅供圖表/預覽標題顯示用（不影響解析）。
+    純數字日期欄位（如只有 1、2、3...）沒有月份資訊，會回傳 None，呼叫端需自行
+    fallback 為不顯示月份。刻意不從 parse_schedule 每次重新呼叫外的其他地方快取
+    這個結果——同一份範本可能被套用在不同月份的檔案上，月份必須每次跟著實際上傳
+    的檔案重新判斷，不能存進範本裡變成固定值。
+    """
+    if header_row_idx < 0 or header_row_idx >= len(rows):
+        return None
+    date_row = rows[header_row_idx]
+
+    months = []
+    for d in range(max_days):
+        col = first_day_col + d * cols_per_day
+        val = date_row.get(col)
+        if val is None:
+            continue
+        if isinstance(val, (datetime.datetime, datetime.date)):
+            months.append(val.month)
+            continue
+        m = re.match(r"^(\d{1,2})月\d{1,2}日$", str(val).strip())
+        if m:
+            months.append(int(m.group(1)))
+
+    if not months:
+        return None
+
+    best_month, count = Counter(months).most_common(1)[0]
+    if count / len(months) >= 0.5:
+        return best_month
+    return None
 
 _HEADER_KEYWORDS = [
     "姓名", "員工姓名", "name", "employee", "職稱", "工號", "員工編號", "員編",
