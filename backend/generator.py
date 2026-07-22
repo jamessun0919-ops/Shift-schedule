@@ -1,12 +1,60 @@
 import os
+import re
 import shutil
+import zipfile
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.series import SeriesLabel
+from openpyxl.chart.label import DataLabel, DataLabelList
 from openpyxl.styles import PatternFill, Font, Alignment
 
 # 班別長條的統一顏色，對應網頁預覽的 --series-1（前後段班別性質上無差異，不用顏色區分）
 DUR_SERIES_COLOR = "2A78D6"
+
+def compute_hourly_headcount(employees, day, axis_start, axis_end):
+    """
+    對 [axis_start, axis_end) 內每個整點小時 h，統計「班別與 [h, h+1) 區間重疊」
+    的員工人數（區間重疊判斷，非單一時間點判斷）。回傳依小時排序的人數列表，
+    長度為 axis_end - axis_start。
+    """
+    counts = []
+    for h in range(axis_start, axis_end):
+        count = 0
+        for emp in employees:
+            day_info = emp["days"].get(day)
+            if not day_info:
+                continue
+            for shift in day_info["shifts"]:
+                s, e = shift.get("start"), shift.get("end")
+                if s is None or e is None or e <= s:
+                    continue
+                if s < h + 1 and e > h:
+                    count += 1
+                    break
+        counts.append(count)
+    return counts
+
+_DLBL_NUMFMT_RE = re.compile(rb'(<numFmt formatCode="&quot;[^"]*&quot;")\s*/>')
+
+def _fix_datalabel_numfmt_sourcelinked(xlsx_path):
+    """
+    openpyxl 的 DataLabel.numFmt 只能設定 formatCode，沒有介面可設定 OOXML
+    規格要求的 sourceLinked 屬性；沒有明確標示 sourceLinked="0"，Excel／
+    LibreOffice 會判定「沿用來源儲存格格式」而忽略我們自訂的格式碼字面值
+    （用來顯示每小時人數，見 add_xlsx_gantt_chart）。存檔後直接補這個屬性
+    進圖表 XML（openpyxl 沒有 API 可用，只能後處理）。
+    """
+    with zipfile.ZipFile(xlsx_path, "r") as zin:
+        items = {info.filename: zin.read(info.filename) for info in zin.infolist()}
+        infos = zin.infolist()
+
+    for name in items:
+        if name.startswith("xl/charts/chart") and name.endswith(".xml"):
+            items[name] = _DLBL_NUMFMT_RE.sub(rb'\1 sourceLinked="0" />', items[name])
+
+    with zipfile.ZipFile(xlsx_path, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in infos:
+            zout.writestr(info, items[info.filename])
 
 def _get_n_shifts(row_meanings):
     n_shifts = 0
@@ -55,29 +103,34 @@ def generate_xlsx(employees, output_path, template_config, month=None):
             cell.alignment = Alignment(horizontal="center", vertical="center")
             
         # 2. Populate employee raw shifts
+        # 第 2 列保留給「上班人數」虛擬列（見下方甘特圖姓名軸新增列），真實
+        # 員工資料從第 3 列開始，姓名軸標籤/座標軸相關列位須同步位移。
+        ws.cell(row=2, column=1, value="上班人數")
         time_fmt = "h:mm"
         for idx, emp in enumerate(employees):
-            r = idx + 2
+            r = idx + 3
             row_data = [emp["name"]]
-            
+
             day_info = emp["days"][day]
             for s_idx in range(n_shifts):
                 shift = day_info["shifts"][s_idx] if s_idx < len(day_info["shifts"]) else {"start": None, "end": None}
-                
+
                 start_frac = (shift["start"] / 24) if shift["start"] is not None else None
                 end_frac = (shift["end"] / 24) if shift["end"] is not None else None
                 row_data.extend([start_frac, end_frac])
-                
+
             ws.append(row_data)
-            
+
             # Format times
             for c_idx in range(2, 2 + 2 * n_shifts):
                 cell = ws.cell(row=r, column=c_idx)
                 cell.number_format = time_fmt
                 cell.alignment = Alignment(horizontal="center", vertical="center")
-                
+
             ws.cell(row=r, column=1).font = Font(name="Microsoft JhengHei", size=10, bold=True)
-            
+
+        ws.cell(row=2, column=1).font = Font(name="Microsoft JhengHei", size=10, bold=True)
+
         # 3. Build helper columns for Gantt chart
         start_helper_col = 2 + 2 * n_shifts
         helper_headers = ["base"]
@@ -85,26 +138,44 @@ def generate_xlsx(employees, output_path, template_config, month=None):
             helper_headers.append(f"dur{s_idx}")
             if s_idx < n_shifts:
                 helper_headers.append(f"gap{s_idx}")
-                
+
+        # 每小時人數輔助欄：每個整點一欄，固定長度 1 小時（1/24），確保與時間軸
+        # 刻度對齊；真實員工列全部填 0（見下方），只有「上班人數」列（第2列）
+        # 會依序填滿整個座標軸範圍。
+        hourly_hours = list(range(axis_start, axis_end))
+        for h in hourly_hours:
+            helper_headers.append(f"cnt{h}")
+
         for h_idx, h_name in enumerate(helper_headers):
             ws.cell(row=1, column=start_helper_col + h_idx, value=h_name)
 
-        # 輔助欄（base/dur/gap）僅供甘特圖繪製使用，對使用者無意義，隱藏但保留資料。
+        # 輔助欄（base/dur/gap/cnt）僅供甘特圖繪製使用，對使用者無意義，隱藏但保留資料。
         for h_idx in range(len(helper_headers)):
             ws.column_dimensions[_col_letter(start_helper_col + h_idx)].hidden = True
 
         day_start = axis_start / 24
+        cnt_start_col = start_helper_col + 2 * n_shifts
+
+        # 「上班人數」虛擬列（第2列）：真實班別欄位全部填 0（不畫班別長條），
+        # 每小時欄依序填 1/24（固定 1 小時長度），從 axis_start 開始接續填滿到
+        # axis_end，長條本身透明、只靠資料標籤顯示人數（見 add_xlsx_gantt_chart）。
+        ws.cell(row=2, column=start_helper_col, value=day_start)
+        for s_idx in range(2 * n_shifts - 1):
+            ws.cell(row=2, column=start_helper_col + 1 + s_idx, value=0.0)
+        for h_idx in range(len(hourly_hours)):
+            ws.cell(row=2, column=cnt_start_col + h_idx, value=1 / 24)
+
         for idx, emp in enumerate(employees):
-            r = idx + 2
+            r = idx + 3
             day_info = emp["days"][day]
-            
+
             active_shifts = []
             for s in day_info["shifts"]:
                 if s["start"] is not None and s["end"] is not None:
                     active_shifts.append(s)
-            
+
             active_shifts.sort(key=lambda x: x["start"])
-            
+
             segments = []
             if not active_shifts:
                 base = day_start
@@ -112,41 +183,50 @@ def generate_xlsx(employees, output_path, template_config, month=None):
             else:
                 base = active_shifts[0]["start"] / 24
                 durations_and_gaps = [(active_shifts[0]["end"] - active_shifts[0]["start"]) / 24]
-                
+
                 for s_idx in range(1, len(active_shifts)):
                     gap = (active_shifts[s_idx]["start"] - active_shifts[s_idx - 1]["end"]) / 24
                     dur = (active_shifts[s_idx]["end"] - active_shifts[s_idx]["start"]) / 24
                     durations_and_gaps.extend([gap, dur])
-                
+
                 needed_segments = 2 * n_shifts - 1
                 if len(durations_and_gaps) < needed_segments:
                     durations_and_gaps.extend([0.0] * (needed_segments - len(durations_and_gaps)))
-            
+
             ws.cell(row=r, column=start_helper_col, value=base)
             for s_idx, val in enumerate(durations_and_gaps):
                 ws.cell(row=r, column=start_helper_col + 1 + s_idx, value=val)
-                
-        add_xlsx_gantt_chart(ws, len(employees), n_shifts, start_helper_col, axis_start, axis_end, month)
+            # 真實員工不參與「上班人數」列的每小時欄，全部填 0。
+            for h_idx in range(len(hourly_hours)):
+                ws.cell(row=r, column=cnt_start_col + h_idx, value=0.0)
+
+        hourly_counts = compute_hourly_headcount(employees, day, axis_start, axis_end)
+        add_xlsx_gantt_chart(ws, len(employees), n_shifts, start_helper_col, axis_start, axis_end, month, hourly_counts)
 
     wb.save(output_path)
+    _fix_datalabel_numfmt_sourcelinked(output_path)
     print(f"Generated XLSX schedule: {output_path}")
 
-def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start=8, axis_end=24, month=None):
+def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start=8, axis_end=24, month=None, hourly_counts=None):
     chart = BarChart()
     chart.type = "bar"
     chart.grouping = "stacked"
     chart.overlap = 100
     month_prefix = f"{month}月" if month else ""
     chart.title = f"{month_prefix}{ws.title}日 排班長條圖"
-    # 輔助欄（base/dur/gap）在上面被隱藏，但圖表仍需讀取其資料繪圖：
+    # 輔助欄（base/dur/gap/cnt）在上面被隱藏，但圖表仍需讀取其資料繪圖：
     # Excel 圖表預設 plotVisOnly=true（只畫可見儲存格），必須關閉。
     chart.visible_cells_only = False
     chart.legend = None
 
-    last_row = n_employees + 1
+    hourly_counts = hourly_counts or []
+    n_hour_segs = len(hourly_counts)
+    # 姓名軸多一列「上班人數」虛擬列（見 generate_xlsx），所有列數計算加 1。
+    last_row = n_employees + 2
 
     total_series = 2 * n_shifts
-    for s_idx in range(total_series):
+    total_series_all = total_series + n_hour_segs
+    for s_idx in range(total_series_all):
         col = start_helper_col + s_idx
         ref = Reference(ws, min_col=col, min_row=1, max_row=last_row)
         chart.add_data(ref, titles_from_data=True)
@@ -165,10 +245,10 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
     chart.x_axis.tickLblSkip = 1
     chart.x_axis.tickMarkSkip = 1
 
-    # 實測發現 LibreOffice 即使 tickLblSkip=1 仍會依「圖表高度 ÷ 員工數」自行
-    # 算間隔並跳過標籤，需要圖表本身夠高才會真的顯示全部姓名。以 10 人的高度
-    # 為下限（避免人少時圖表過矮），不設上限、依員工數等比放大。
-    chart.height = max(10, n_employees) * 0.8
+    # 實測發現 LibreOffice 即使 tickLblSkip=1 仍會依「圖表高度 ÷ 類別數」自行
+    # 算間隔並跳過標籤，需要圖表本身夠高才會真的顯示全部姓名。以 10 個類別的
+    # 高度為下限（避免人少時圖表過矮），不設上限、依類別數（員工+人數列）等比放大。
+    chart.height = max(10, n_employees + 1) * 0.8
 
     # 時間軸（y_axis，數值軸）：原本誤設定在 x_axis 上，導致真正的數值軸完全沒有
     # 格式化（顯示 0~1 的原始小數）；改回設在 y_axis，刻度間隔比照網頁版每小時一格。
@@ -192,6 +272,30 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
             chart.series[s_idx].graphicalProperties.solidFill = DUR_SERIES_COLOR
         else:
             chart.series[s_idx].graphicalProperties.noFill = True
+
+    # 每小時人數（姓名軸最上方「上班人數」虛擬列）：區段本身透明，只靠資料
+    # 標籤顯示人數。區段實際數值固定為 1 小時長度（用來對齊時間軸刻度，不能
+    # 直接當人數顯示），改用 DataLabel.numFmt 的引號字面值技巧（Excel 自訂數字
+    # 格式支援用雙引號包住的文字固定顯示，不受實際數值影響）覆蓋顯示文字；
+    # 「上班人數」列是姓名軸第一個類別（idx=0），只對該點加標籤。
+    # 實測發現：不明確關閉 showCatName/showSerName，LibreOffice 會把類別名稱／
+    # 數列名稱一起串進標籤文字，變成「上班人數;cnt8;0.0417」的疊字亂碼，須明確關閉。
+    # 且這個關閉必須設在 dLbls 這一層（適用其他未被 idx=0 覆蓋的點，即真實員工
+    # 那些人數欄=0的點），否則其他點會落回「未設定=顯示」的預設值，在真實
+    # 員工列的長條上疊出「Alice;cnt10;0」這類多餘文字。
+    dlbls_common = dict(
+        showCatName=False, showSerName=False,
+        showLegendKey=False, showPercent=False, showBubbleSize=False,
+    )
+    for h_idx in range(n_hour_segs):
+        s_idx = total_series + h_idx
+        series = chart.series[s_idx]
+        series.graphicalProperties.noFill = True
+        count_val = hourly_counts[h_idx]
+        series.dLbls = DataLabelList(
+            dLbl=[DataLabel(idx=0, numFmt=f'"{count_val}"', showVal=True, **dlbls_common)],
+            showVal=False, **dlbls_common,
+        )
 
     chart.width = 24
 
@@ -218,7 +322,9 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
     top_axis_chart.x_axis.delete = True
     chart += top_axis_chart
 
-    chart_col = chr(65 + start_helper_col + total_series + 1)
+    # 用 _col_letter() 而非 chr(65+n)：新增每小時人數輔助欄後，欄位總數容易超過
+    # 26 欄（單一英文字母上限），chr() 換算會產生非法欄位代號。
+    chart_col = _col_letter(start_helper_col + total_series_all + 1)
     ws.add_chart(chart, f"{chart_col}2")
 
 
