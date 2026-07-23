@@ -59,13 +59,13 @@
 - **工作日誌與對話紀錄**：每日彙整於 `工作日誌.md`／`對話紀錄.md`，交接文檔同步更新。
 - **API rate limiting（2026-07-23）**：用 `slowapi` 對 `/api/analyze`／`/api/preview`／`/api/convert` 三個實際執行解析/產生檔案的端點加上 20 次/分鐘（依 client IP）限制，`/api/templates` CRUD 與 `/api/health` 不受影響；`render.yaml` 的 startCommand 加上 `--proxy-headers`，確保 Render 邊緣代理後仍能正確判斷真實使用者 IP。已用 `TestClient` 驗證：連續呼叫 `/api/analyze` 第 21 次起收到 429、`/api/health` 連續 30 次不受影響，`tests/verify_engine.py` 六份範例迴歸測試無回歸。
 - **修正例外訊息外洩問題（2026-07-23）**：`/api/analyze`／`/api/preview`／`/api/convert` 原本把 Python 例外原始內容直接回傳給前端（`f"...：{e}"`，經查為 2026-07-15 建立後端時的原始設計，非除錯殘留），改為回傳篩選過的固定提示文字，真實例外內容改用 `logging.exception()` 寫伺服器端 log（Render 會自動收集 stdout/stderr）。已用 `TestClient` 分別觸發三處例外路徑，驗證回應內容不含檔案路徑/堆疊片段。
+- **修正同步阻塞運算寫在 async 路由中的問題（2026-07-23）**：`/api/analyze`／`/api/preview`／`/api/convert` 內部的 `openpyxl` 解析/產生圖表是同步（blocking）運算，但函式宣告為 `async def`，卻沒有任何 `await`，等於白白讓這段阻塞運算佔住 FastAPI 唯一的事件迴圈、拖累其他請求。改為宣告成一般 `def`，FastAPI／Starlette 會自動丟進執行緒池執行，不再佔用事件迴圈；函式內部邏輯完全不用改動。已用 `TestClient` 驗證三個端點成功路徑（分析→試解析→下載，含真實範例檔案）皆正常運作，rate limiting 與例外訊息篩選機制不受影響，`tests/verify_engine.py` 六份範例迴歸測試無回歸。
 
 ## 未完成事項
 
 - **部署方式（2026-07-23 已上線，兩項已知限制皆已決策定案，待觸發條件成立後執行）**：已部署至 Render（單一 Web Service，前端靜態檔＋FastAPI API 同一 process，見上方 Demo），採原生 Python 路線、暫不使用 Docker（依賴極輕，Docker 的價值在未來搬遷可攜性，非現階段必要）。(1) **範本持久化**：demo 階段接受 Free tier 無 Persistent Disk 導致 `templates/` 於重新部署/閒置回收後清空，待商轉時升級付費方案＋掛 Persistent Disk 解決；(2) **存取控制**：demo 階段暫不處理 `scope_id` 無歸屬驗證問題（目前任何人知道 scope_id 即可讀寫該範本，已於使用手冊 FAQ 誠實告知使用者），待日後接入餐飲平台主體時，`scope_id` 改由平台的帳號密碼機制產生，屆時再實作——不在本專案自建帳號系統，符合〈專案目標〉既有架構決策。
 - **員編門檻／3 段班真實樣本驗證（非 bug，待補充更多真實資料）**：(1) 員編欄位辨識目前僅在填寫率達信心門檻時才會猜測欄位，稀疏填寫的檔案會誠實回報「未偵測到」而非硬猜，門檻是否合理尚待更多真實樣本驗證；(2) 3 段班（N-shift）目前僅驗證程式邏輯本身（用合成資料），尚無真實 3 段班班表可驗證啟發式偵測在真實資料上的準確度。兩者皆非阻塞，累積更多真實客戶檔案後再驗證。
 - **無伺服器端 log／可觀測性（2026-07-23 新增，部分改善）**：`/api/analyze`／`/api/preview`／`/api/convert` 三處例外處理已改用 `logging.exception()` 記錄失敗當下的完整例外內容（見上方已完成進度），但僅涵蓋這三處失敗路徑，**不是**全面的請求層級 log（例如成功請求、耗時、呼叫頻率統計皆無記錄）。若之後再發生「使用者回報異常但無法重現」的狀況（尤其是解析「成功」但結果不正確這類不會觸發例外的情形），現有 log 仍幫不上忙。
-- **同步阻塞運算寫在 async 路由中（2026-07-23 新增，次要）**：`openpyxl` 解析/產生圖表是同步（blocking）運算，但直接寫在 FastAPI 的 `async def` 路由裡，未丟到執行緒池執行，理論上會佔住事件迴圈；以目前使用規模（少數店家、非高併發）影響很小，但若未來多店家同時使用會是第一個變瓶頸的地方。
 
 ## 欄位辨識規則技術參考
 

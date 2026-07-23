@@ -87,7 +87,7 @@ async def health():
 
 @app.post("/api/analyze")
 @limiter.limit("20/minute")
-async def analyze(request: Request, file: UploadFile = File(...)):
+def analyze(request: Request, file: UploadFile = File(...)):
     tmp_path = _save_upload_to_temp(file)
     try:
         template = guess_template(tmp_path)
@@ -117,7 +117,7 @@ async def analyze(request: Request, file: UploadFile = File(...)):
 
 @app.post("/api/preview")
 @limiter.limit("20/minute")
-async def preview(request: Request, file: UploadFile = File(...), template: str = Form(...)):
+def preview(request: Request, file: UploadFile = File(...), template: str = Form(...)):
     tmp_path = _save_upload_to_temp(file)
     template_dict = _parse_template_json(template)
     try:
@@ -143,7 +143,7 @@ async def preview(request: Request, file: UploadFile = File(...), template: str 
 
 @app.post("/api/convert")
 @limiter.limit("20/minute")
-async def convert(
+def convert(
     request: Request,
     file: UploadFile = File(...),
     template: str = Form(...),
