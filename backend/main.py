@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import tempfile
@@ -18,6 +19,9 @@ from starlette.background import BackgroundTask
 from backend.generator import generate_xlsx
 from backend.heuristics import guess_axis_range, guess_template
 from backend.parser import extract_top_preview, get_hidden_columns, parse_schedule
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="班表格式轉換工具 API")
 
@@ -98,8 +102,9 @@ async def analyze(request: Request, file: UploadFile = File(...)):
             template["display"] = {"axis_start": 8, "axis_end": 24}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(422, f"分析失敗：{e}")
+    except Exception:
+        logger.exception("analyze failed")
+        raise HTTPException(422, "分析失敗，無法辨識此檔案的班表格式，請確認檔案內容是否正確")
     finally:
         os.remove(tmp_path)
 
@@ -119,8 +124,9 @@ async def preview(request: Request, file: UploadFile = File(...), template: str 
         result = parse_schedule(tmp_path, template_dict)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(422, f"解析失敗，請確認範本欄位對照：{e}")
+    except Exception:
+        logger.exception("preview failed")
+        raise HTTPException(422, "解析失敗，請確認範本欄位對照是否正確")
     finally:
         os.remove(tmp_path)
 
@@ -155,10 +161,11 @@ async def convert(
         generate_xlsx(result["employees"], out_path, template_dict, month=result["month"])
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         if out_path and os.path.exists(out_path):
             os.remove(out_path)
-        raise HTTPException(422, f"轉換失敗：{e}")
+        logger.exception("convert failed")
+        raise HTTPException(422, "轉換失敗，請確認範本欄位對照是否正確")
     finally:
         os.remove(tmp_path)
 

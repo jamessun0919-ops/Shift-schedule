@@ -57,6 +57,8 @@
 - **xlsx 甘特圖輔助欄隱藏（2026-07-21）**：`generate_xlsx()` 用來畫圖表的 base/dur/gap 輔助欄位，改為 `column_dimensions[...].hidden = True` 隱藏（欄位資料保留、圖表仍讀取），並將 `chart.visible_cells_only` 設為 `False`，避免 Excel/LibreOffice 預設「只畫可見儲存格」導致圖表跟著消失。已用實際安裝的 LibreOffice headless 轉檔渲染驗證，隱藏欄位與圖表皆正常。
 - **確認本機環境已安裝 LibreOffice（2026-07-21）**：位於 `C:\Program Files\LibreOffice\program\soffice.exe`（未在 PATH）。之後可用 headless 轉檔（`--headless --convert-to png/pdf`）實際渲染驗證 Excel/ODS 視覺呈現，之前交接文檔記錄的「無法自行渲染驗證」限制已解除。
 - **工作日誌與對話紀錄**：每日彙整於 `工作日誌.md`／`對話紀錄.md`，交接文檔同步更新。
+- **API rate limiting（2026-07-23）**：用 `slowapi` 對 `/api/analyze`／`/api/preview`／`/api/convert` 三個實際執行解析/產生檔案的端點加上 20 次/分鐘（依 client IP）限制，`/api/templates` CRUD 與 `/api/health` 不受影響；`render.yaml` 的 startCommand 加上 `--proxy-headers`，確保 Render 邊緣代理後仍能正確判斷真實使用者 IP。已用 `TestClient` 驗證：連續呼叫 `/api/analyze` 第 21 次起收到 429、`/api/health` 連續 30 次不受影響，`tests/verify_engine.py` 六份範例迴歸測試無回歸。
+- **修正例外訊息外洩問題（2026-07-23）**：`/api/analyze`／`/api/preview`／`/api/convert` 原本把 Python 例外原始內容直接回傳給前端（`f"...：{e}"`，經查為 2026-07-15 建立後端時的原始設計，非除錯殘留），改為回傳篩選過的固定提示文字，真實例外內容改用 `logging.exception()` 寫伺服器端 log（Render 會自動收集 stdout/stderr）。已用 `TestClient` 分別觸發三處例外路徑，驗證回應內容不含檔案路徑/堆疊片段。
 
 ## 未完成事項
 
@@ -65,9 +67,7 @@
 - **部署方式（2026-07-23 已上線，兩項已知限制皆已決策定案，待觸發條件成立後執行）**：已部署至 Render（單一 Web Service，前端靜態檔＋FastAPI API 同一 process，見上方 Demo），採原生 Python 路線、暫不使用 Docker（依賴極輕，Docker 的價值在未來搬遷可攜性，非現階段必要）。(1) **範本持久化**：demo 階段接受 Free tier 無 Persistent Disk 導致 `templates/` 於重新部署/閒置回收後清空，待商轉時升級付費方案＋掛 Persistent Disk 解決；(2) **存取控制**：demo 階段暫不處理 `scope_id` 無歸屬驗證問題（目前任何人知道 scope_id 即可讀寫該範本，已於使用手冊 FAQ 誠實告知使用者），待日後接入餐飲平台主體時，`scope_id` 改由平台的帳號密碼機制產生，屆時再實作——不在本專案自建帳號系統，符合〈專案目標〉既有架構決策。
 - **員編欄位辨識準確度**：目前僅在員編填寫率夠高（達信心門檻）時才會猜測欄位，稀疏填寫的檔案會誠實回報「未偵測到」而非硬猜，尚待更多真實樣本驗證門檻是否合理。
 - **3 段班（N-shift）真實樣本驗證**：目前僅驗證程式邏輯本身（用合成資料），尚無真實 3 段班班表可驗證啟發式偵測在真實資料上的準確度。
-- **API 無 rate limiting（2026-07-23 新增，公開上線後發現）**：`/api/analyze`／`/api/convert` 等端點不需要 scope_id、任何人皆可直接呼叫，且會實際執行解析/產生 xlsx 圖表這類有運算成本的工作，目前沒有任何呼叫頻率限制，公開上線後可能被重複呼叫拖累效能，付費方案上更可能反映在帳單上。與「存取控制」是不同層次的問題（即使 scope_id 之後接上帳號機制，這類不需要 scope_id 的端點仍不受保護）。
-- **錯誤訊息直接回傳 Python 例外內容（2026-07-23 新增）**：`backend/main.py` 多處 `raise HTTPException(422, f"...：{e}")`（如 [main.py:89](backend/main.py#L89)、[main.py:109](backend/main.py#L109)、[main.py:145](backend/main.py#L145)）會把伺服器內部例外訊息（可能含檔案路徑、函式庫堆疊片段）直接回傳給呼叫端，對公開 API 屬於低嚴重度的資訊揭露。
-- **無伺服器端 log／可觀測性（2026-07-23 新增）**：目前沒有任何應用層 log，只能依賴 Render 自身的系統 log。與上方「甘特圖姓名軸標籤跳過問題」直接相關——之後若再發生「agent 端修好、使用者端仍回報失敗」這類無法重現的落差，沒有 log 可先行排查，只能伸手跟使用者要實際檔案。
+- **無伺服器端 log／可觀測性（2026-07-23 新增，部分改善）**：`/api/analyze`／`/api/preview`／`/api/convert` 三處例外處理已改用 `logging.exception()` 記錄失敗當下的完整例外內容（見上方已完成進度），但僅涵蓋這三處失敗路徑，**不是**全面的請求層級 log（例如成功請求、耗時、呼叫頻率統計皆無記錄）。與「甘特圖姓名軸標籤跳過問題」的關聯依然存在——若使用者回報的失敗不是走這三個例外路徑（例如解析「成功」但結果不正確），現有 log 仍幫不上忙。
 - **同步阻塞運算寫在 async 路由中（2026-07-23 新增，次要）**：`openpyxl` 解析/產生圖表是同步（blocking）運算，但直接寫在 FastAPI 的 `async def` 路由裡，未丟到執行緒池執行，理論上會佔住事件迴圈；以目前使用規模（少數店家、非高併發）影響很小，但若未來多店家同時使用會是第一個變瓶頸的地方。
 
 ## 欄位辨識規則技術參考
