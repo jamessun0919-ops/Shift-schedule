@@ -14,12 +14,13 @@ DUR_SERIES_COLOR = "2A78D6"
 def compute_hourly_headcount(employees, day, axis_start, axis_end):
     """
     對 [axis_start, axis_end) 內每個整點小時 h，統計「班別與 [h, h+1) 區間重疊」
-    的員工人數（區間重疊判斷，非單一時間點判斷）。回傳依小時排序的人數列表，
-    長度為 axis_end - axis_start。
+    的員工人數，以重疊時數佔該小時的比例計算（例如 9:30 上班，9 點這格記為
+    0.5，非整點上下班時為小數）。同一員工在同一小時內的多段班別重疊時數會
+    加總。回傳依小時排序的人數列表，長度為 axis_end - axis_start。
     """
     counts = []
     for h in range(axis_start, axis_end):
-        count = 0
+        count = 0.0
         for emp in employees:
             day_info = emp["days"].get(day)
             if not day_info:
@@ -28,9 +29,9 @@ def compute_hourly_headcount(employees, day, axis_start, axis_end):
                 s, e = shift.get("start"), shift.get("end")
                 if s is None or e is None or e <= s:
                     continue
-                if s < h + 1 and e > h:
-                    count += 1
-                    break
+                overlap = min(e, h + 1) - max(s, h)
+                if overlap > 0:
+                    count += overlap
         counts.append(count)
     return counts
 
@@ -291,9 +292,10 @@ def add_xlsx_gantt_chart(ws, n_employees, n_shifts, start_helper_col, axis_start
         s_idx = total_series + h_idx
         series = chart.series[s_idx]
         series.graphicalProperties.noFill = True
-        count_val = hourly_counts[h_idx]
+        count_val = round(hourly_counts[h_idx], 2)
+        count_label = str(int(count_val)) if count_val == int(count_val) else f"{count_val:g}"
         series.dLbls = DataLabelList(
-            dLbl=[DataLabel(idx=0, numFmt=f'"{count_val}"', showVal=True, **dlbls_common)],
+            dLbl=[DataLabel(idx=0, numFmt=f'"{count_label}"', showVal=True, **dlbls_common)],
             showVal=False, **dlbls_common,
         )
 

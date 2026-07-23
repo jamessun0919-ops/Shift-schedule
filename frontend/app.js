@@ -120,9 +120,26 @@
       return;
     }
     currentFile = file;
-    setStatus(uploadStatus, "分析中…", null);
     analyzeBtn.disabled = true;
 
+    const savedId = savedTemplateSelect.value;
+    if (savedId) {
+      // 已存範本：欄位對照已經確認過，直接套用範本產生預覽，不再跳出確認視窗。
+      setStatus(uploadStatus, "套用已存範本中…", null);
+      try {
+        const scopeId = safeScopeId();
+        const template = await fetchJson(`${API}/templates/${encodeURIComponent(scopeId)}/${encodeURIComponent(savedId)}`);
+        const result = await runPreview(template);
+        setStatus(uploadStatus, `已套用「${template.template_name || savedId}」，解析出 ${result.employees_count} 位員工`, "ok");
+      } catch (e) {
+        setStatus(uploadStatus, `套用已存範本失敗：${e.message}`, "error");
+      } finally {
+        analyzeBtn.disabled = false;
+      }
+      return;
+    }
+
+    setStatus(uploadStatus, "分析中…", null);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -130,20 +147,8 @@
       currentPreviewRows = analyzeResult.preview_rows;
       currentHiddenCols = new Set(analyzeResult.hidden_cols || []);
 
-      let template = analyzeResult.suggested_template;
-
-      const savedId = savedTemplateSelect.value;
-      if (savedId) {
-        const scopeId = safeScopeId();
-        try {
-          template = await fetchJson(`${API}/templates/${encodeURIComponent(scopeId)}/${encodeURIComponent(savedId)}`);
-        } catch (e) {
-          setStatus(uploadStatus, `已存範本讀取失敗，改用自動分析結果：${e.message}`, "error");
-        }
-      }
-
       setStatus(uploadStatus, "分析完成，請於確認視窗核對欄位。", "ok");
-      openModal(template);
+      openModal(analyzeResult.suggested_template);
     } catch (e) {
       setStatus(uploadStatus, `分析失敗：${e.message}`, "error");
     } finally {
@@ -477,28 +482,33 @@
     }
   });
 
+  // ---- Run preview against a template (shared by saved-template shortcut & modal confirm) ----
+  async function runPreview(template) {
+    if (!currentFile) {
+      throw new Error("找不到原始檔案，請重新上傳");
+    }
+    const fd = new FormData();
+    fd.append("file", currentFile);
+    fd.append("template", JSON.stringify(template));
+    const result = await fetchJson(`${API}/preview`, { method: "POST", body: fd });
+
+    confirmedTemplate = template;
+    lastEmployees = result.employees;
+    currentMonth = result.month;
+
+    showDayPreviewPanel(result);
+    return result;
+  }
+
   // ---- Confirm & preview ----
   confirmPreviewBtn.addEventListener("click", async () => {
-    if (!currentFile) {
-      setStatus(previewResultText, "找不到原始檔案，請重新上傳", "error");
-      return;
-    }
     const template = collectTemplateFromForm();
     setStatus(previewResultText, "試解析中…", null);
     confirmPreviewBtn.disabled = true;
 
     try {
-      const fd = new FormData();
-      fd.append("file", currentFile);
-      fd.append("template", JSON.stringify(template));
-      const result = await fetchJson(`${API}/preview`, { method: "POST", body: fd });
-
-      confirmedTemplate = template;
-      lastEmployees = result.employees;
-      currentMonth = result.month;
-
+      const result = await runPreview(template);
       setStatus(previewResultText, `解析出 ${result.employees_count} 位員工`, "ok");
-      showDayPreviewPanel(result);
       closeModal();
     } catch (e) {
       setStatus(previewResultText, `試解析失敗：${e.message}`, "error");
@@ -551,6 +561,32 @@
     return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
   }
 
+  // 與 backend/generator.py 的 compute_hourly_headcount() 邏輯一致：對每個整點
+  // 小時 h，統計「班別與 [h, h+1) 區間重疊」的時數比例並加總（非整點上下班時
+  // 記為小數，例如 9:30 上班在 9 點這格記為 0.5）。
+  function computeHourlyHeadcount(employees, day, axisStart, axisEnd) {
+    const counts = [];
+    for (let h = axisStart; h < axisEnd; h += 1) {
+      let count = 0;
+      for (const emp of employees) {
+        const shifts = emp.days[day]?.shifts || [];
+        for (const s of shifts) {
+          const st = s.start;
+          const en = s.end;
+          if (st === null || st === undefined || en === null || en === undefined || en <= st) continue;
+          const overlap = Math.min(en, h + 1) - Math.max(st, h);
+          if (overlap > 0) count += overlap;
+        }
+      }
+      counts.push(count);
+    }
+    return counts;
+  }
+
+  function fmtHeadcount(v) {
+    return String(Math.round(v * 100) / 100);
+  }
+
   function renderDayGantt(day) {
     dayTitle.textContent = currentMonth ? `${currentMonth} 月 ${day} 日 排班預覽` : `${day} 日 排班預覽`;
     ganttContainer.innerHTML = "";
@@ -576,6 +612,31 @@
       ganttContainer.appendChild(empty);
       return;
     }
+
+    // 「上班人數」虛擬列置頂，與 xlsx 下載檔的甘特圖版面一致。
+    const headcountRow = document.createElement("div");
+    headcountRow.className = "gantt-row gantt-headcount-row";
+
+    const headcountName = document.createElement("div");
+    headcountName.className = "gantt-name";
+    headcountName.textContent = "上班人數";
+    headcountRow.appendChild(headcountName);
+
+    const headcountTrack = document.createElement("div");
+    headcountTrack.className = "gantt-track";
+    const hourlyCounts = computeHourlyHeadcount(lastEmployees, day, AXIS_START, AXIS_END);
+    for (let h = AXIS_START; h < AXIS_END; h += 1) {
+      const leftPct = ((h - AXIS_START) / (AXIS_END - AXIS_START)) * 100;
+      const widthPct = (1 / (AXIS_END - AXIS_START)) * 100;
+      const label = document.createElement("div");
+      label.className = "gantt-headcount-label";
+      label.style.left = `${leftPct}%`;
+      label.style.width = `${widthPct}%`;
+      label.textContent = fmtHeadcount(hourlyCounts[h - AXIS_START]);
+      headcountTrack.appendChild(label);
+    }
+    headcountRow.appendChild(headcountTrack);
+    ganttContainer.appendChild(headcountRow);
 
     // 顯示所有員工（含當天沒有可辨識時間段的人，如記錄方式特殊的營運經理），
     // 只是沒有時間段的人不會畫出長條，只留姓名列——與下載檔案的既有行為一致。
