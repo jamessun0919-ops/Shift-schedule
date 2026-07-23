@@ -2,6 +2,14 @@
 
 餐飲業月排班表格轉換為每日橫向長條圖排班表的網頁工具。
 
+## Demo
+
+[![Demo](https://img.shields.io/badge/Demo-線上試用-2a78d6?style=for-the-badge)](https://shift-schedule-b5ne.onrender.com)
+
+[![使用手冊](https://img.shields.io/badge/使用手冊-操作說明-2a78d6?style=for-the-badge)](https://shift-schedule-b5ne.onrender.com/manual.html)
+
+> 部署於 Render 免費方案，閒置一段時間後首次開啟可能需要數十秒喚醒。
+
 ## 專案目標
 
 輸入不同公司/品牌的格狀排班 Excel/ODS（員工 × 日期，欄位配置不固定），輸出橫向長條圖排班 Excel/ODS（每日一分頁，含 Excel 原生 Gantt 式長條圖），解決格狀班表不利於每日/即時人力控管的問題。
