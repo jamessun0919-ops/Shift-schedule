@@ -6,10 +6,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from starlette.background import BackgroundTask
 
 from backend.generator import generate_xlsx
@@ -24,6 +27,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 只限流實際做解析/產生檔案這類有運算成本的端點（analyze/preview/convert），
+# 範本 CRUD 與 health check 是輕量 JSON 讀寫，不設限，避免擋到正常操作流程。
+# 門檻設定為「濫用斷路器」而非一般使用配額：單一使用者/單一店家正常操作
+# （分析+反覆調整欄位對照+存範本+下載）一次session實測約 4~8 次呼叫，
+# 20 次/分鐘遠高於正常使用量，只會擋到明顯異常的重複呼叫。
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -70,7 +82,8 @@ async def health():
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...)):
+@limiter.limit("20/minute")
+async def analyze(request: Request, file: UploadFile = File(...)):
     tmp_path = _save_upload_to_temp(file)
     try:
         template = guess_template(tmp_path)
@@ -98,7 +111,8 @@ async def analyze(file: UploadFile = File(...)):
 
 
 @app.post("/api/preview")
-async def preview(file: UploadFile = File(...), template: str = Form(...)):
+@limiter.limit("20/minute")
+async def preview(request: Request, file: UploadFile = File(...), template: str = Form(...)):
     tmp_path = _save_upload_to_temp(file)
     template_dict = _parse_template_json(template)
     try:
@@ -122,7 +136,9 @@ async def preview(file: UploadFile = File(...), template: str = Form(...)):
 
 
 @app.post("/api/convert")
+@limiter.limit("20/minute")
 async def convert(
+    request: Request,
     file: UploadFile = File(...),
     template: str = Form(...),
 ):
