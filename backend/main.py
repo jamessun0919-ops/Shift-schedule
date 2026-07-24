@@ -2,7 +2,9 @@ import json
 import logging
 import os
 import re
+import subprocess
 import tempfile
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,10 +45,50 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "templates"
+DATA_DIR = BASE_DIR / "data"
+PENDING_SAMPLES_DIR = BASE_DIR / "pending_samples"
+GITHUB_REPO_URL = "https://github.com/jamessun0919-ops/Shift-schedule.git"
 
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20MB
 ALLOWED_EXTENSIONS = {".xlsx", ".ods"}
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-一-鿿]+$")
+
+
+def _git_commit_and_push_sample(safe_name: str) -> None:
+    """背景執行緒呼叫：把新樣本 commit/push 到 pending_samples/，失敗只記 log 不影響主流程。"""
+    rel_path = f"pending_samples/{safe_name}"
+    try:
+        subprocess.run(
+            ["git", "add", rel_path],
+            cwd=BASE_DIR, check=True, capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["git", "-c", "user.name=sample-archiver", "-c", "user.email=noreply@shift-schedule.local",
+             "commit", "-m", f"新增測試樣本：{safe_name}"],
+            cwd=BASE_DIR, check=True, capture_output=True, text=True,
+        )
+        token = os.environ.get("GITHUB_PUSH_TOKEN")
+        remote = f"https://x-access-token:{token}@github.com/jamessun0919-ops/Shift-schedule.git" if token else "origin"
+        subprocess.run(
+            ["git", "push", remote, "HEAD:main"],
+            cwd=BASE_DIR, check=True, capture_output=True, text=True,
+        )
+    except Exception:
+        logger.exception("測試樣本 git commit/push 失敗：%s", safe_name)
+
+
+def _archive_sample_if_new(filename: str, contents: bytes) -> None:
+    """已存在 data/ 或 pending_samples/ 的同名檔案不重複收錄；新檔案存進 pending_samples/ 並在背景 commit/push，等待開發者手動審核後移入 data/。"""
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return
+    if (DATA_DIR / safe_name).exists() or (PENDING_SAMPLES_DIR / safe_name).exists():
+        return
+
+    PENDING_SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    (PENDING_SAMPLES_DIR / safe_name).write_bytes(contents)
+
+    threading.Thread(target=_git_commit_and_push_sample, args=(safe_name,), daemon=True).start()
 
 
 def _save_upload_to_temp(file: UploadFile) -> str:
@@ -59,6 +101,8 @@ def _save_upload_to_temp(file: UploadFile) -> str:
         raise HTTPException(400, "上傳檔案為空")
     if len(contents) > MAX_UPLOAD_SIZE:
         raise HTTPException(400, "檔案過大，上限 20MB")
+
+    _archive_sample_if_new(file.filename, contents)
 
     fd, tmp_path = tempfile.mkstemp(suffix=ext)
     with os.fdopen(fd, "wb") as f:

@@ -4,3 +4,5 @@ __pycache__/
 *.xlsx
 sample_analysis.txt
 templates/
+!pending_samples/*.xlsx
+!pending_samples/*.ods
